@@ -1,26 +1,26 @@
-## e5 · 개수 문제: 같은 실험, 지표에 따라 뒤집히는 결론
+## e5 · The count problem: same experiment, conclusion flips with the metric
 
-가설 — 라벨 개수를 따로 맞히는 모델이 확률비 한 줄을 이기는가
+Hypothesis — Does a model that predicts the label count separately beat the one-line probability ratio?
 
-작은 모델은 7회 호출로 만든 pseudo-label 로 학습한 것 하나로 고정하고 디코딩만 바꾼다. 개수 판정기는 pseudo-label의 개수를 타깃으로 학습했다(오라클 미사용, 정답 개수 기준 정확도 0.885).
+The small model is fixed to a single model trained on pseudo-labels from 7 calls; only decoding changes. The count predictor was trained with the pseudo-label count as its target (no oracle used; accuracy against the true count 0.885).
 
-세 점수기를 같은 예측 멀티율(0.113, pseudo-label 멀티율에 맞춤)에서 비교한다. 임계값은 val 에서만 정하고 test 는 보고에만 쓴다.
+The three scorers are compared at the same predicted multi rate (0.113, matched to the pseudo-label multi rate). Thresholds are set on val only; test is used only for reporting.
 
-| 점수기 (운영점 일치) | t(val) | 전체 EM(test) | 멀티행 EM(test) | 예측 멀티율 |
+| Scorer (matched operating point) | t(val) | Overall EM(test) | Multi-row EM(test) | Predicted multi rate |
 |---|---:|---:|---:|---:|
-| 확률비 p2/p1 | 0.6155 | 0.6861 | 0.0536 | 0.1218 |
-| 개수 판정기 P(멀티) | 0.1636 | 0.6883 | 0.1810 | 0.1120 |
-| 결합 P(멀티)×(p2/p1) | 0.0734 | 0.6924 | 0.0746 | 0.1192 |
-| (참고) 멀티라벨을 아예 안 예측 | - | 0.7279 | 0.0000 | 0.0000 |
-| 개수를 알려줬을 때 (상한) | - | 0.7836 | 0.4854 | 0.1148 |
+| Probability ratio p2/p1 | 0.6155 | 0.6861 | 0.0536 | 0.1218 |
+| Count predictor P(multi) | 0.1636 | 0.6883 | 0.1810 | 0.1120 |
+| Combined P(multi)×(p2/p1) | 0.0734 | 0.6924 | 0.0746 | 0.1192 |
+| (Reference) never predict multi-label | - | 0.7279 | 0.0000 | 0.0000 |
+| Count given (upper bound) | - | 0.7836 | 0.4854 | 0.1148 |
 
-같은 멀티율에서 전체 EM 은 확률비 0.6861 vs 판정기 0.6883 (McNemar p=0.376) — 차이가 있어도 소수점 셋째 자리다. 그런데 멀티행 EM 은 0.0536 → 0.1810 로 3배 넘게 벌어진다 (p=6.2e-42). 판정기는 '어느 행이 멀티인가'에 대해 확률비가 모르는 것을 안다 — 이 세계에서 멀티 여부는 두 후보가 공존 허용 쌍인지에 달려 있고, 그건 상위 두 확률의 비율에 들어 있지 않은 정보이기 때문이다. 그런데도 전체 EM 이 안 움직이는 이유는 단순하다: 멀티행이 전체의 11.5% 뿐이라 평균 지표가 그 이득을 통째로 삼킨다.
+At the same multi rate, overall EM is probability ratio 0.6861 vs count predictor 0.6883 (McNemar p=0.376) — any difference is in the third decimal place. Yet multi-row EM widens more than 3x, 0.0536 → 0.1810 (p=6.2e-42). The predictor knows something about 'which rows are multi-label' that the probability ratio does not — in this world, whether a row is multi-label depends on whether the two candidates form an allowed co-occurring pair, and that information is not contained in the ratio of the top two probabilities. Why overall EM still does not move is simple: multi-label rows are only 11.5% of the total, so the averaged metric swallows the gain entirely.
 
-> 주의: 여기서 이 실험실이 실제 파이프라인과 갈린다. 실무에서 같은 구조의 개수 판정기를 여러 변형으로 학습시켰을 때는 확률비 게이트를 끝내 넘지 못했다. 합성 세계에서는 '개수'가 공존 허용 쌍이라는 깔끔한 규칙으로 정해지므로 판정기가 배울 것이 실제보다 많다. → 합성 실험이 실무 결론을 대체하지 못하는 지점이고, 차이가 난 이유를 설명할 수 있을 때에만 합성 실험이 쓸모 있다.
+> Caution: this is where the lab diverges from the real pipeline. In production, when count predictors with the same structure were trained in several variants, none ever beat the probability-ratio gate. In the synthetic world the 'count' is determined by a clean rule (allowed co-occurring pairs), so the predictor has more to learn than in reality. → This is a point where a synthetic experiment cannot replace a production conclusion; a synthetic experiment is useful only when you can explain why the results differ.
 
-확률비 임계값을 움직이며 test 에서 직접 본 파레토 전선:
+Pareto front observed directly on test while sweeping the probability-ratio threshold:
 
-| t | 전체 EM | 멀티행 EM | 예측 멀티율 |
+| t | Overall EM | Multi-row EM | Predicted multi rate |
 |---|---:|---:|---:|
 | 0.1000 | 0.5063 | 0.3223 | 0.4911 |
 | 0.2000 | 0.5781 | 0.2229 | 0.3671 |
@@ -30,8 +30,8 @@
 | 0.7000 | 0.6974 | 0.0397 | 0.0910 |
 | 0.9000 | 0.7182 | 0.0100 | 0.0285 |
 
-전체 EM 은 t=1.00 에서 0.7279 로 최대인데, 그때 멀티행 EM 은 0.0000 다. 멀티행 최대는 t=0.10 의 0.3223 이고 이때 전체는 0.5063 로 떨어진다. 하나의 t 로 두 축을 동시에 최대화할 수 없다. 그러니 t 는 '튜닝해서 얻는 값'이 아니라 어느 쪽 오류를 감당할지 정하는 운영 결정이다.
+Overall EM peaks at 0.7279 at t=1.00, where multi-row EM is 0.0000. Multi-row EM peaks at 0.3223 at t=0.10, where overall EM drops to 0.5063. No single t maximizes both axes at once. So t is not 'a value obtained by tuning' but an operational decision about which kind of error to accept.
 
-판정 — △ 부분지지. H5a 부분지지 — 무엇을 재느냐에 따라 결론이 뒤집히는 사례. 전체 EM 으로는 차이가 없고(0.6861 → 0.6883) 멀티행 EM 으로는 명백한 지지(0.0536 → 0.1810, p=6.2e-42). 전체 EM 하나만 찍고 '판정기 기각'이라고 적었다면 실재하는 신호를 지표 설계 때문에 버렸을 것이다.
+Verdict — △ Partially supported. H5a partially supported — a case where the conclusion flips depending on what is measured. Overall EM shows no difference (0.6861 → 0.6883), while multi-row EM clearly supports it (0.0536 → 0.1810, p=6.2e-42). Had we reported overall EM alone and written 'count predictor rejected', we would have discarded a real signal because of metric design.
 
-판정 — ❌ 기각. H5b 기각. 전체 EM 최적 임계값과 멀티행 최적 임계값이 다르고, 전체 EM 만 최대화하면 답은 '멀티라벨을 아예 예측하지 마라'(0.7279)로 수렴한다. 즉 t 는 튜닝해서 얻는 값이 아니라 어느 쪽 오류를 감당할지 정하는 운영 결정이다. 개수를 알려줬을 때의 상한 0.7836 이 남은 여지를 알려준다.
+Verdict — ❌ Rejected. H5b rejected. The threshold that is optimal for overall EM differs from the one optimal for multi-label rows, and maximizing overall EM alone converges to 'never predict multi-label' (0.7279). That is, t is not a value obtained by tuning but an operational decision about which kind of error to accept. The upper bound when the count is given, 0.7836, shows the remaining headroom.

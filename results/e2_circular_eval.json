@@ -1,9 +1,9 @@
 {
   "slug": "e2_circular_eval",
-  "title": "e2 순환 채점표는 순위를 뒤집는다",
-  "hypothesis": "라벨링 LLM pseudo-label 채점 / 파이프라인 외부 신호 채점 / 진짜 정답 채점 — 셋의 순위가 같은가",
+  "title": "e2 · A circular scorecard flips the ranking",
+  "hypothesis": "Scoring with labeling-LLM pseudo-labels / with an outside-the-pipeline signal / with the true labels — do the three give the same ranking?",
   "scores": {
-    "1회": {
+    "1 call": {
       "same_source_em": 0.6905905905905906,
       "same_source_top1": 0.8278778778778779,
       "outside_signal": 0.6541524459613197,
@@ -11,7 +11,7 @@
       "truth_top1_acc": 0.7888388388388389,
       "truth_multi_em": 0.206279982555604
     },
-    "3회": {
+    "3 calls": {
       "same_source_em": 0.6934434434434434,
       "same_source_top1": 0.8285285285285285,
       "outside_signal": 0.6452362928517357,
@@ -19,7 +19,7 @@
       "truth_top1_acc": 0.7660660660660661,
       "truth_multi_em": 0.08547754034016572
     },
-    "5회": {
+    "5 calls": {
       "same_source_em": 0.6990490490490491,
       "same_source_top1": 0.8303303303303303,
       "outside_signal": 0.650731550458224,
@@ -27,7 +27,7 @@
       "truth_top1_acc": 0.7796296296296297,
       "truth_multi_em": 0.08940252943741823
     },
-    "7회": {
+    "7 calls": {
       "same_source_em": 0.7021021021021021,
       "same_source_top1": 0.8286786786786787,
       "outside_signal": 0.6514629948364888,
@@ -35,7 +35,7 @@
       "truth_top1_acc": 0.7805805805805806,
       "truth_multi_em": 0.07849978194505015
     },
-    "5회+외부신호 보정": {
+    "5 calls + outside-signal fix": {
       "same_source_em": 0.6945445445445445,
       "same_source_top1": 0.826026026026026,
       "outside_signal": 0.6663203368513151,
@@ -43,7 +43,7 @@
       "truth_top1_acc": 0.8045045045045045,
       "truth_multi_em": 0.18578281726995202
     },
-    "7회+외부신호 보정": {
+    "7 calls + outside-signal fix": {
       "same_source_em": 0.6964964964964965,
       "same_source_top1": 0.8237737737737738,
       "outside_signal": 0.670842261414208,
@@ -57,35 +57,35 @@
     "outside": 1.0,
     "outside_contaminated": 0.3333333333333333,
     "rank_same_source": [
-      "5회",
-      "7회",
-      "3회",
-      "1회",
-      "5회+외부신호 보정",
-      "7회+외부신호 보정"
+      "5 calls",
+      "7 calls",
+      "3 calls",
+      "1 call",
+      "5 calls + outside-signal fix",
+      "7 calls + outside-signal fix"
     ],
     "rank_outside": [
-      "7회+외부신호 보정",
-      "5회+외부신호 보정",
-      "1회",
-      "7회",
-      "5회",
-      "3회"
+      "7 calls + outside-signal fix",
+      "5 calls + outside-signal fix",
+      "1 call",
+      "7 calls",
+      "5 calls",
+      "3 calls"
     ],
     "rank_true": [
-      "7회+외부신호 보정",
-      "5회+외부신호 보정",
-      "1회",
-      "7회",
-      "5회",
-      "3회"
+      "7 calls + outside-signal fix",
+      "5 calls + outside-signal fix",
+      "1 call",
+      "7 calls",
+      "5 calls",
+      "3 calls"
     ]
   },
   "mcnemar_best": {
     "b01": 680,
     "b10": 420,
     "z": 7.809143824564077,
-    "p": 5.757776690688888e-15
+    "p": 5.757776690688887e-15
   },
   "bias_sweep": [
     [
@@ -119,5 +119,5 @@
       0.744310977644311
     ]
   ],
-  "verdict": "✅ 지지: H2 지지. pseudo-label 평가셋의 순위상관 τ=-0.73, 외부 신호 τ=1.00. 라벨링 LLM pseudo-label 로 매긴 1등은 정답 기준 1등이 아니었다. 절대 점수가 낮은 거친 축이, 절대 점수가 높은 순환 축보다 나은 채점표다."
+  "verdict": "✅ Supported: H2 supported. Rank correlation of the pseudo-label eval set τ=-0.73, outside signal τ=1.00. The model ranked first by labeling-LLM pseudo-labels was not first against the truth. A coarse axis with low absolute scores is a better scorecard than a circular axis with high absolute scores."
 }

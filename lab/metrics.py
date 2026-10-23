@@ -1,8 +1,8 @@
-"""집합 단위 지표 + 짝비교 유의성.
+"""Set-level metrics + paired significance tests.
 
-멀티라벨에서 flat accuracy 하나만 보면 거의 반드시 속는다.
-전체 완전일치는 그대로인데 멀티행이 반토막 나는 조합이 흔하기 때문이다.
-그래서 전체 EM / 단일행 EM / 멀티행 EM 을 항상 같이 찍는다.
+In multi-label settings, looking only at flat accuracy is almost guaranteed to mislead.
+It is common for overall exact match to stay flat while multi-label rows drop by half.
+So overall EM / single-label-row EM / multi-label-row EM are always reported together.
 """
 
 from __future__ import annotations
@@ -38,8 +38,8 @@ def summary(pred: np.ndarray, gold: np.ndarray) -> dict[str, float]:
 
 
 def mcnemar(a_correct: np.ndarray, b_correct: np.ndarray) -> dict[str, float]:
-    """짝지은 두 시스템의 EM 비교. 연속성 보정 정규근사 (scipy 불필요)."""
-    b01 = int((~a_correct & b_correct).sum())   # a 틀리고 b 맞음
+    """EM comparison of two paired systems. Normal approximation with continuity correction (no scipy needed)."""
+    b01 = int((~a_correct & b_correct).sum())   # a wrong, b right
     b10 = int((a_correct & ~b_correct).sum())
     n = b01 + b10
     if n == 0:
@@ -51,7 +51,7 @@ def mcnemar(a_correct: np.ndarray, b_correct: np.ndarray) -> dict[str, float]:
 
 
 def oracle_ceiling(gold: np.ndarray) -> float:
-    """개수를 알려줬을 때의 상한 — '남은 점수가 어디 있는지' 알려주는 기준선."""
+    """Upper bound when the label count is given - a reference line that shows where the remaining score is."""
     return 1.0
 
 
@@ -60,7 +60,7 @@ def rank_of(scores: dict[str, float]) -> list[str]:
 
 
 def kendall_tau(rank_a: list[str], rank_b: list[str]) -> float:
-    """두 순위의 일치도. +1 완전일치, -1 완전역전."""
+    """Agreement between two rankings. +1 identical, -1 fully reversed."""
     items = list(rank_a)
     pos_a = {k: i for i, k in enumerate(rank_a)}
     pos_b = {k: i for i, k in enumerate(rank_b)}

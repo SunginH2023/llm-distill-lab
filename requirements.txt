@@ -1,2 +1,2 @@
-# 의존성은 numpy 하나입니다. GPU·네트워크·데이터 다운로드가 필요 없습니다.
+# numpy is the only dependency. No GPU, network access, or data download is needed.
 numpy>=1.24

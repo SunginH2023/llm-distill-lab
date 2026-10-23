@@ -1,16 +1,17 @@
-"""파이프라인 외부 신호 (weak external axes).
+"""Signals from outside the pipeline (weak external axes).
 
-라벨링 LLM이 붙인 라벨로 채점하면 '같은 집안 효과'를 못 벗어난다. 벗어나려면 LLM 파이프라인
-외부에서 온 관측이 필요하다. 실무에서 쓴 것은 두 개였다:
+Scoring with labels assigned by the labeling LLM cannot escape the "same-family effect".
+Escaping it requires observations that come from outside the LLM pipeline. Two were used
+in production:
 
-  * 사용자가 접수 시점에 직접 고른 굵은 카테고리
-  * 담당자가 실제로 그 건을 보낸 처리 조직
+  * the coarse category the user picked themselves at submission time
+  * the routing target a staff member actually sent the item to
 
-둘 다 (a) 라벨 체계보다 훨씬 거칠고 (b) 잡음이 많지만 (c) 라벨링 LLM과 통계적으로
-독립이다. 그래서 절대 점수는 낮게 나오고 상대 비교만 유효하다.
+Both are (a) much coarser than the label taxonomy and (b) noisy, but (c) statistically
+independent of the labeling LLM. So absolute scores come out low and only relative comparisons are valid.
 
-여기서는 같은 성질의 축을 두 개 만든다. 하나는 라벨 정제용, 다른 하나는
-평가 전용으로 분리한다 — 정제에 쓴 축으로 평가하면 그것도 순환이기 때문이다.
+Here we build two axes with the same properties. One is used for label refinement and the
+other is kept for evaluation only - evaluating with the axis used for refinement would also be circular.
 """
 
 from __future__ import annotations
@@ -22,10 +23,10 @@ import numpy as np
 
 @dataclass
 class WeakAxis:
-    """클래스 → 굵은 그룹의 다대일 사상 + 관측 잡음."""
+    """Many-to-one map from classes to coarse groups + observation noise."""
     name: str
-    group_of: np.ndarray     # (C,) 클래스 → 그룹
-    observed: np.ndarray     # (n,) 관측된 그룹 (잡음 포함)
+    group_of: np.ndarray     # (C,) class -> group
+    observed: np.ndarray     # (n,) observed group (noisy)
     noise: float
 
     @property
@@ -33,9 +34,9 @@ class WeakAxis:
         return int(self.group_of.max()) + 1
 
     def compatible(self, pred: np.ndarray) -> np.ndarray:
-        """예측 집합이 관측된 그룹과 양립하는가 → (n,) bool.
+        """Is the predicted set compatible with the observed group? -> (n,) bool.
 
-        '정확도'가 아니라 일관성을 잰다: 모델의 답이 이 관측과 모순되지 않는가.
+        Measures consistency, not "accuracy": does the model's answer not contradict this observation?
         """
         pred_groups = np.where(pred, self.group_of[None, :], -1)
         return (pred_groups == self.observed[:, None]).any(axis=1)
@@ -45,11 +46,11 @@ class WeakAxis:
         return float(ok.mean() if mask is None else ok[mask].mean())
 
     def score_top1(self, proba: np.ndarray, mask: np.ndarray | None = None) -> float:
-        """외부 신호는 1등 라벨만 채점한다.
+        """The outside signal scores only the top label.
 
-        집합 전체를 채점하면 라벨을 많이 뱉는 모델이 유리해진다(양립할 기회가 늘어나므로).
-        즉 외부 신호는 '개수'를 채점할 수 없다 — 이 축의 구조적 한계이고,
-        그래서 개수/디코딩은 별도 실험(e5)에서 따로 잰다.
+        Scoring the whole set favors models that emit many labels (more chances to be compatible).
+        In other words, the outside signal cannot score the label "count" - a structural limit of
+        this axis, which is why count/decoding is measured separately in its own experiment (e5).
         """
         top1 = np.argmax(proba, axis=1)
         ok = self.group_of[top1] == self.observed
@@ -62,10 +63,10 @@ class WeakAxis:
 
 def make_axis(name: str, primary: np.ndarray, n_classes: int, n_groups: int,
               noise: float, seed: int) -> WeakAxis:
-    """진짜 라벨에서 파생시키되 잡음을 섞는다. 라벨링 LLM은 이 과정에 관여하지 않는다."""
+    """Derived from the true labels, with noise mixed in. The labeling LLM plays no part in this process."""
     rng = np.random.default_rng(seed)
     group_of = rng.integers(0, n_groups, size=n_classes)
-    # 빈 그룹이 없도록 보정
+    # make sure no group is empty
     for g in range(n_groups):
         if not (group_of == g).any():
             group_of[rng.integers(0, n_classes)] = g
@@ -78,38 +79,39 @@ def make_axis(name: str, primary: np.ndarray, n_classes: int, n_groups: int,
 
 def contaminate(axis: WeakAxis, attractor_class: int, strength: float,
                 seed: int) -> WeakAxis:
-    """외부 신호를 '라벨링 LLM과 같은 방향으로' 오염시킨다.
+    """Contaminate an outside signal "in the same direction as the labeling LLM".
 
-    순환 밖에서 왔다는 것만으로는 부족하다. 그 축이 라벨링 LLM과 같은 편향을 공유하면
-    (예: 운영 자동배정 규칙을 라벨링 LLM도 학습해 버린 경우) 축은 다시 순환에 빨려든다.
-    여기서는 관측 잡음이 균등이 아니라 라벨링 LLM이 좋아하는 그룹으로 쏠리게 만든다.
+    Coming from outside the loop is not enough on its own. If the axis shares the labeling
+    LLM's bias (e.g. the labeling LLM has also learned an operational auto-routing rule),
+    the axis gets pulled back into the loop. Here the observation noise is not uniform but
+    skewed toward the group the labeling LLM favors.
     """
     rng = np.random.default_rng(seed)
     obs = axis.observed.copy()
     target = axis.group_of[attractor_class]
     pull = rng.random(len(obs)) < strength
     obs[pull] = target
-    return WeakAxis(f"{axis.name} (오염됨)", axis.group_of, obs, axis.noise)
+    return WeakAxis(f"{axis.name} (contaminated)", axis.group_of, obs, axis.noise)
 
 
 def discriminative_mask(axis: WeakAxis, proba: np.ndarray) -> np.ndarray:
-    """축이 상위 두 후보를 실제로 구분해 주는 행만 남긴다.
+    """Keep only rows where the axis actually distinguishes the top two candidates.
 
-    두 후보가 같은 그룹이면 이 축은 그 행에 대해 아무 말도 못 한다.
-    실무에서 '판별력 없는 잡동사니 카테고리'를 제외한 것과 같은 처리다.
+    If both candidates fall in the same group, the axis says nothing about that row.
+    This mirrors excluding "non-discriminative catch-all categories" in production.
     """
     order = np.argsort(-proba, axis=1)
     return axis.group_of[order[:, 0]] != axis.group_of[order[:, 1]]
 
 
 def tiebreak(key, axis: WeakAxis, only: np.ndarray, secondary_frac: float = 0.34):
-    """애매한 행에 한해, 순환 밖 축으로 primary 를 뒤집는다.
+    """For ambiguous rows only, flip the primary label using an axis from outside the loop.
 
-    조건: 지금 1등이 관측 그룹과 모순이고 2등은 양립 → 둘을 교체.
-    오라클은 쓰지 않는다. `only` 로 대상을 애매행에 한정하는 게 중요하다 —
-    만장일치 행까지 건드리면 잡음 많은 축이 멀쩡한 라벨을 깎아먹는다.
+    Condition: the current top label contradicts the observed group and the runner-up is
+    compatible -> swap them. The oracle is not used. Restricting targets to ambiguous rows
+    via `only` matters - touching unanimous rows too lets a noisy axis erode correct labels.
 
-    반환 (새 Key, 교체된 행 수).
+    Returns (new key, number of swapped rows).
     """
     out = key.copy()
     n = out.mat.shape[0]
@@ -123,6 +125,6 @@ def tiebreak(key, axis: WeakAxis, only: np.ndarray, secondary_frac: float = 0.34
     out.primary[s] = p2[s]
     out.mat[s] = False
     out.mat[s, p2[s]] = True
-    keep_old = key.frac[s, p1[s]] >= secondary_frac      # 원래 1등은 secondary 로 강등
+    keep_old = key.frac[s, p1[s]] >= secondary_frac      # the old top label is demoted to secondary
     out.mat[s[keep_old], p1[s[keep_old]]] = True
     return out, int(swap.sum())

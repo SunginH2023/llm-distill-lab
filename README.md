@@ -1,241 +1,288 @@
+**English** | [한국어](README.ko.md)
+
 # llm-distill-lab
 
-LLM이 생성한 pseudo-label 로 소형 모델을 학습시키는 사이클을, 정답이 정의된 합성 세계에서
-데이터 구축부터 평가까지 재현한 실험 기록.
+A record of experiments that reproduce, end to end, the cycle of training a small model on
+LLM-generated pseudo-labels: from data construction to evaluation, in a synthetic world where
+the ground truth is defined.
 
 ```
-pip install numpy                  # lab/ 의존성은 numpy 하나
-python experiments/run_all.py      # 약 65초, 결과는 results/RESULTS.md
+pip install numpy                  # numpy is the only dependency of lab/
+python experiments/run_all.py      # under a minute on a laptop CPU (about 17 s on an Apple M1 laptop); output in results/RESULTS.md
 ```
 
----
+## Related papers
 
-## 1. 배경
-
-새 도메인의 분류 과제에서는 유형 체계와 경계 정의가 사전에 확립되어 있지 않다.
-사람 라벨링은 기준 수립을 전제로 하고, 기준 수립은 데이터 관찰을 전제로 하는데,
-초기 단계에서는 둘 다 확보되지 않은 상태다.
-
-LLM 라벨링은 이 의존 관계를 우회한다. 정확도가 낮더라도 전량에 초기 라벨이 부여되고,
-그 분포 위에서 유형 분할·병합 논의가 가능해진다. 이 관점에서 pseudo-label 은
-최종 정답이 아니라 초기 상태에 해당한다.
-
-pseudo-label 기반 베이스라인이 확보되면 이후 검증 라벨이 소량 유입될 때 전면 재구축 없이
-증분 갱신이 가능하다. 검증 라벨을 어느 지점에 투입할 때 이득이 큰지도 베이스라인이 있어야 측정된다.
+- *Borrowed Accuracy: How Teacher-Labeled Test Sets Inflate Reported Performance in LLM-Labeled Pipelines*.
+  IEEE BigData 2026 (Industry & Government Track), under review.
+  e2 studies the same mechanism, a pseudo-labeled eval set that rewards imitation of the labeler,
+  in a controlled synthetic world. The paper itself uses a public benchmark (GoEmotions);
+  this repository does not reproduce the paper's numbers.
+- *How Often Must You Call the Verifier? Budget Saturation in Multi-Label Cascades*. ICTC 2026, accepted.
+  e4 asks a related question: how to allocate a fixed budget of LLM calls.
 
 ---
 
-## 2. 문제 정의
+## 1. Background
 
-pseudo-label 의 품질은 직접 관측되지 않는다. 이를 보완하기 위해 다음이 사용된다.
+In a classification task on a new domain, the label taxonomy and its boundary definitions are not
+established in advance. Human labeling presupposes labeling guidelines, and writing the guidelines
+presupposes looking at the data. At the start, neither is available.
 
-- 동일 모델 반복 호출 후 합의 여부 확인 (self-consistency)
-- 별도 모델을 통한 라벨 검수 (LLM-as-a-judge)
-- 합의가 깨진 건에 대한 사람 검수
-- 투표 분포를 소프트 타깃으로 사용
-- 애매한 건에 한정한 추가 호출
+LLM labeling breaks this dependency. Even when its accuracy is low, every item receives an initial
+label, and the resulting distribution makes it possible to discuss splitting and merging categories.
+From this point of view, a pseudo-label is not a final answer but an initial state.
 
-각 기법의 효과를 검증하려면 정답이 필요하다. 그러나 평가셋의 라벨도 동일한 LLM에서 생성된다.
-따라서 관측되는 지표는 정답 대비 정확도가 아니라 라벨 출처 모델에 대한 재현도이며,
-두 값은 서로 다른 모델을 최상위로 선택할 수 있다.
-
----
-
-## 3. 접근
-
-정답(오라클)이 정의된 합성 세계를 구성하고, 오라클 없이 내린 판단이 사후에 옳았는지 채점한다.
-오라클은 평가에만 사용하고 학습 및 라벨 정제 경로에서는 배제한다.
-
-실무 데이터는 포함하지 않는다. 모든 수치는 고정 시드로 생성한 합성 데이터에서 산출된다.
+Once a pseudo-label baseline exists, small amounts of verified labels can later be added as
+incremental updates, without rebuilding from scratch. A baseline is also needed to measure where
+verified labels give the largest gain.
 
 ---
 
-## 4. 실험 구성
+## 2. Problem
 
-| 실험 | 검증 대상 | 결과 | 판정 |
+The quality of pseudo-labels is not directly observed. The following techniques are used to compensate:
+
+- calling the same model several times and checking agreement (self-consistency)
+- reviewing labels with a separate model (LLM-as-a-judge)
+- human review of items where agreement breaks
+- using the vote distribution as a soft target
+- extra calls restricted to ambiguous items
+
+Verifying the effect of each technique requires ground truth. However, the eval-set labels are also
+produced by the same LLM. The observed metric is therefore not accuracy against the truth but the
+degree to which the model reproduces the labeling model. These two quantities can select different
+models as the best.
+
+---
+
+## 3. Approach
+
+We build a synthetic world with a defined ground truth (oracle), and score after the fact whether
+decisions made without the oracle were correct. The oracle is used only for evaluation. It is
+excluded from the training and label-refinement paths.
+
+No real-world data is included. All numbers come from synthetic data generated with fixed seeds.
+
+---
+
+## 4. Experiments
+
+| Exp. | Question | Result | Verdict |
 |---|---|---|---|
-| [e1](results/e1_consensus_gate.md) | 반복 호출의 합의 정도로 정답 없이 라벨 품질을 사전 분류할 수 있는가 | 만장일치 구간 0.972 vs 합의 실패 구간 0.270 (70.2pp) | 지지 |
-| e1b | 저비용 LLM을 추가해 두 모델이 일치한 건만 채택하면 품질이 상승하는가 | 커버리지 54% 손실, 정확도 0.792 → 0.784 하락 | 기각 |
-| e1c | LLM-as-a-judge 로 라벨을 검수하면 품질이 상승하는가 | judge 통과분 0.809, 동일 커버리지의 투표 게이트 0.935 | 기각 |
-| [e2](results/e2_circular_eval.md) | pseudo-label 로 구성한 평가셋이 모델 순위를 보존하는가 | 해당 평가셋 τ = −0.73, 파이프라인 외부 신호 τ = +1.00 | 지지 |
-| [e3](results/e3_soft_labels.md) | 최종 라벨 대신 투표 분포를 학습 타깃으로 쓰면 개선되는가 | 합의 실패 층 +1.62pp, 전체 +1.03pp. 전체 EM은 하락 | 부분지지 |
-| [e4](results/e4_call_budget.md) | 동일 호출 예산에서 어떤 배분이 유리한가 | 18,886건 표적 재호출 > 30,000건 전량 3회 (+1.81pp) | 지지 |
-| [e5](results/e5_cardinality.md) | 라벨 개수 전용 판정기가 확률비 게이트를 상회하는가 | 전체 EM 동률(0.686 → 0.688), 멀티행 EM 0.054 → 0.181 | 부분지지 |
+| [e1](results/e1_consensus_gate.md) | Can the degree of agreement across repeated calls sort label quality in advance, without ground truth? | Unanimous band 0.972 vs. split-vote band 0.270 (70.2pp) | Supported |
+| e1b | Does adding a cheap LLM and keeping only items where the two models agree improve quality? | Coverage drops to 54%; accuracy falls 0.792 → 0.784 | Rejected |
+| e1c | Does reviewing labels with an LLM-as-a-judge improve quality? | Judge 0.794 vs. vote gate 0.935 at the same ~59% coverage; even the strictest judge reaches only 0.809 (at 22% coverage) | Rejected |
+| [e2](results/e2_circular_eval.md) | Does an eval set built from pseudo-labels preserve the ranking of models? | That eval set τ = −0.73; signal from outside the pipeline τ = +1.00 | Supported |
+| [e3](results/e3_soft_labels.md) | Does training on the vote distribution instead of the final label help? | Split-vote stratum top-1 +1.62pp, overall top-1 +1.03pp. Overall EM falls | Partially supported |
+| [e4](results/e4_call_budget.md) | Under the same call budget, which allocation is better? | Targeted re-calls on 18,886 items > 3 calls on all 30,000 items (top-1 +1.81pp) | Supported |
+| [e5](results/e5_cardinality.md) | Does a dedicated label-count predictor beat a probability-ratio gate? | Overall EM tied (0.686 → 0.688); multi-label-row EM 0.054 → 0.181 | Partially supported |
 
-판정 분포는 지지 3건, 부분지지 2건, 기각 3건이다. 기각된 시도도 동일한 형식으로 기록한다.
+Verdicts: 3 Supported, 2 Partially supported, 3 Rejected (e1b, e1c, and H5b in e5).
+Rejected attempts are recorded in the same format as the others.
 
 ---
 
-## 5. 주요 결과: 평가셋 출처에 따른 순위 역전
+## 5. Main result: rank reversal depending on where the eval labels come from
 
-구조와 하이퍼파라미터가 동일한 소형 모델 6개를 학습 라벨만 바꿔 생성하고,
-동일한 예측을 세 개의 채점표로 채점한다.
+We train six small models with identical architecture and hyperparameters; only the training labels
+differ. The same predictions are then scored with three scorecards.
 
-| 채점표 | 실무 환경 | 합성 환경 |
+| Scorecard | In practice | In the synthetic world |
 |---|---|---|
-| ① pseudo-label 기반 평가셋 | 확보 가능 | 있음 |
-| ② 파이프라인 외부 신호 (거칠고 잡음 있음) | 확보 가능 | 있음 |
-| ③ 정답 | 관측 불가 | 있음 |
+| ① Eval set built from pseudo-labels | Available | Available |
+| ② Signal from outside the pipeline (coarse, noisy) | Available | Available |
+| ③ Ground truth | Not observable | Available |
 
-세 채점표가 산출한 순위:
+Model names give the number of labeler calls used to build the training labels.
+"+ fix" (short for "+ outside-signal fix") means that the labels of split-vote items were additionally
+corrected with a separate outside axis, the category the user selected at input time. This is not the
+axis that scorecard ② uses: ② scores against the routing-target assignment, so the correction and the
+evaluation never share an axis (see `lab/pipeline.py` and [METHOD.md §3.4](METHOD.md#34-separate-the-correction-axis-from-the-evaluation-axis)).
+Rankings produced by the three scorecards:
 
-| 채점표 | 1위 | 2위 | 3위 | 4위 | 5위 | 6위 | 정답과의 τ |
+| Scorecard | 1st | 2nd | 3rd | 4th | 5th | 6th | τ vs. truth |
 |---|---|---|---|---|---|---|---:|
-| ① pseudo-label 평가셋 | 5회 | 7회 | 3회 | 1회 | 5회+보정 | 7회+보정 | −0.73 |
-| ② 외부 신호 | 7회+보정 | 5회+보정 | 1회 | 7회 | 5회 | 3회 | +1.00 |
-| ②' 외부 신호(동일 편향으로 오염) | 7회+보정 | 5회+보정 | 3회 | 5회 | 1회 | 7회 | +0.33 |
-| ③ 정답 | 7회+보정 | 5회+보정 | 1회 | 7회 | 5회 | 3회 | +1.00 |
+| ① Pseudo-label eval set | 5 calls | 7 calls | 3 calls | 1 call | 5 calls + fix | 7 calls + fix | −0.73 |
+| ② Outside signal | 7 calls + fix | 5 calls + fix | 1 call | 7 calls | 5 calls | 3 calls | +1.00 |
+| ②' Outside signal (contaminated by the same bias) | 7 calls + fix | 5 calls + fix | 3 calls | 5 calls | 1 call | 7 calls | +0.33 |
+| ③ Ground truth | 7 calls + fix | 5 calls + fix | 1 call | 7 calls | 5 calls | 3 calls | +1.00 |
 
-- ①은 정답 기준 순위와 음의 상관을 보인다(τ = −0.73). ①만으로 배포 모델을 선택하면
-  정답 기준 3.28pp 손실이 발생한다.
-- ②는 절대 점수가 0.67로 낮지만 순위는 정답과 일치한다.
-  외부 신호는 절대 점수를 보고하지 않고 모델 간 상대 비교에만 사용한다.
-- ②'는 외부에서 왔으나 라벨링 LLM과 동일한 방향으로 편향된 신호다. τ가 1.00에서 0.33으로 하락한다.
-  외부 출처라는 조건만으로는 불충분하며 편향 독립성까지 확인해야 한다.
+- ① is negatively correlated with the ground-truth ranking (τ = −0.73). Choosing the deployed
+  model by ① alone loses 3.28pp against the ground truth.
+- ② has a low absolute score (0.67), but its ranking matches the ground truth.
+  We do not report absolute scores from the outside signal; we use it only for relative comparison
+  between models.
+- The ① scores of the top models are very close (0.8279–0.8303 for the four models without the fix),
+  and there are only six models and a single seed, so each τ carries uncertainty.
+- ②' is a signal that comes from outside but is biased in the same direction as the labeling LLM.
+  τ falls from 1.00 to 0.33. Being external is not sufficient; independence of bias must also be checked.
 
-원인은 LLM 오차를 두 성분으로 분해하면 설명된다.
+The cause becomes clear when the LLM error is split into two components.
 
-| 오차 성분 | 예 | 반복 호출 시 | pseudo-label 잔존 | 소형 모델 학습 여부 |
+| Error component | Example | Under repeated calls | Remains in pseudo-labels | Learned by small model |
 |---|---|---|---|---|
-| 무작위 | 호출 간 흔들리는 경계 판정 | 소거됨 | 아니오 | 아니오 (평균화) |
-| 체계 | 애매한 건을 '기타'로 배정, 특정 쌍에서 한쪽 편향 | 소거되지 않음 | 예 | 예 |
+| Random | Boundary decisions that vary between calls | Cancels out | No | No (averaged out) |
+| Systematic | Assigning ambiguous items to 'Other'; favoring one side of a specific pair | Does not cancel | Yes | Yes |
 
-소형 모델은 무작위 성분을 평균화로 소거하고 체계 성분을 승계한다.
-따라서 해당 pseudo-label 로 채점하면 체계 성분까지 재현한 모델이 최상위가 된다.
+The small model removes the random component by averaging and inherits the systematic component.
+When scored against those pseudo-labels, the model that also reproduces the systematic component
+therefore ranks first.
 
-체계 편향 세기 β에 따른 순위 상관:
+Rank correlation as a function of the systematic-bias strength β:
 
-| 편향 β | 0.0 | 0.4 | 0.8 | 1.1 | 1.6 |
+| Bias β | 0.0 | 0.4 | 0.8 | 1.1 | 1.6 |
 |---|---:|---:|---:|---:|---:|
-| ① pseudo-label 평가셋 τ | +0.33 | −0.33 | −1.00 | −1.00 | −1.00 |
-| ② 외부 신호 τ | +1.00 | +1.00 | +1.00 | +1.00 | +1.00 |
+| ① Pseudo-label eval set τ | +0.33 | −0.33 | −1.00 | −1.00 | −1.00 |
+| ② Outside signal τ | +1.00 | +1.00 | +1.00 | +1.00 | +1.00 |
 
-β = 0 에서는 ①도 순위를 보존한다. 역전은 체계 편향이 존재할 때만 발생하며,
-실제 LLM에서 β = 0 인 경우는 없다.
+At β = 0, the ranking from ① is not reversed (τ = +0.33, weakly positive). The reversal occurs only
+when systematic bias is present, and real LLMs are unlikely to have β = 0.
 
 ---
 
-## 6. 텍스트 도메인으로의 확장 (LoRA / QLoRA)
+## 6. Extension to the text domain (LoRA / QLoRA)
 
-e1~e5 는 연산 비용을 낮추기 위해 벡터 표현 위에서 수행된다.
-실제 LLM의 입력은 텍스트이므로, 동일한 세계를 한국어 문의 텍스트로 렌더링하고
-동일한 pseudo-label 파이프라인으로 SFT 데이터를 구성해 LoRA / QLoRA 학습까지 연결했다.
+To keep compute cost low, e1–e5 run on vector representations.
+Real LLMs take text as input. We therefore render the same world as Korean inquiry texts,
+build SFT data with the same pseudo-label pipeline, and connect it to LoRA / QLoRA training.
 → [`finetune/`](finetune/README.md)
 
 ```
-합성 세계 → 한국어 텍스트 → LLM 호출(투표 + 게이트) → pseudo-label
-                                                          ↓
-                       세 채점표로 채점 ← 생성·JSON 파싱 ← LoRA / QLoRA SFT
+synthetic world → Korean text → LLM calls (votes + gate) → pseudo-labels
+                                                              ↓
+          score with three scorecards ← generation, JSON parsing ← LoRA / QLoRA SFT
 ```
 
-문구는 정답 라벨이 아니라 사후확률에 비례해 표집한다. 경계 사례는 두 카테고리의 표현이
-혼재하여 텍스트 자체가 모호해진다.
+Phrases are sampled in proportion to the posterior, not from the true label. For boundary cases,
+expressions from two categories are mixed, so the text itself becomes ambiguous.
 
 ```bash
 pip install -r finetune/requirements.txt
-make data     # 합성 세계 → SFT JSONL
-make smoke    # 학습·생성·채점 전 경로 검증 (CPU, 다운로드 없음, 약 90초)
+make data     # synthetic world → SFT JSONL
+make smoke    # checks the full train / generate / score path (CPU, no downloads, about 26 s on an Apple M1 laptop)
 ```
 
-`--smoke` 는 무작위 초기화된 2층 Llama(0.23M)와 문자 단위 토크나이저를 즉석에서 구성해,
-모델 다운로드와 GPU 없이 전 경로를 실행한다.
-토큰화 → 프롬프트 마스킹 → LoRA 주입 → 학습 → 어댑터 저장·재로딩 → 생성 → JSON 파싱 → 채점.
+`--smoke` builds, on the fly, a randomly initialized 2-layer Llama (about 0.25M parameters) and a
+character-level tokenizer, so the full path runs without model downloads or a GPU:
+tokenization → prompt masking → LoRA injection → training → adapter save and reload → generation →
+JSON parsing → scoring.
 
-실측(CPU 67초): 손실 5.65 → 0.15, 형식 준수율 1.000, 정답 EM 0.156(무작위 추측 0.083).
-분류 성능 지표가 아니라 파이프라인 동작 확인용 수치다.
+Measured on the committed data in `finetune/data` (`make smoke`, train + eval about 26 s on an Apple M1 laptop):
+loss 5.54 → 0.12, format compliance 1.000, ground-truth EM 0.156 (random guessing 0.083).
+These numbers check that the pipeline runs; they are not classification performance.
 
 ---
 
-## 7. 진행 상황
+## 7. Status
 
-| 단계 | 상태 |
+| Stage | Status |
 |---|---|
-| 합성 세계에서 파이프라인·평가 설계 검증 | 완료 (e1~e5) |
-| LoRA / QLoRA 학습 코드 및 생성 평가 경로 | 완료 (CPU 스모크로 검증) |
-| 실제 오픈웨이트 모델 QLoRA(SFT + PEFT) 학습 | 별도 환경에서 데이터 축적 중 |
-| 소량 검증 라벨의 최적 투입 지점 탐색 | 예정 |
+| Validate pipeline and evaluation design in the synthetic world | Done (e1–e5) |
+| LoRA / QLoRA training code and generation-based evaluation path | Done (verified with a CPU smoke run) |
+| QLoRA (SFT + PEFT) training of real open-weight models | Done outside this repository (see below) |
+| Search for the best point at which to add a small set of verified labels | Planned |
 
-실제 학습은 별도 환경에서 데이터를 축적하는 단계다.
-결과 확보 시 이 저장소에는 재현 가능한 설정과 지표 정의만 반영한다.
-해당 작업에 사용하는 데이터는 이 저장소에 포함하지 않는다.
+Training of real open-weight models was carried out in a separate, non-public environment.
+Its data and results are not included in this repository.
+If anything from that work is added here, it will be limited to reproducible settings and metric definitions.
+
+### Next steps (planned, not yet done)
+
+We plan to extend the same evaluation-reliability question to embodied AI: for example, scoring robot
+trajectories in simulation (LIBERO, SimplerEnv) with LLM/VLM judges, and measuring when such scores
+preserve the ranking of policies. This has not been carried out, and there are no results.
 
 ---
 
-## 8. 실험 배경
+## 8. Origin of the experiments
 
-대규모 한국어 텍스트 다중분류 파이프라인 운영에서 반복 관측된 문제를 대상으로 한다.
-해당 파이프라인의 데이터·라벨·지표는 공개 불가하므로 구조만 분리해 합성 환경으로 이전했다.
+The experiments target problems observed repeatedly while operating a large-scale Korean text
+multi-class classification pipeline. The data, labels, and metrics of that pipeline cannot be
+published, so only its structure was extracted and moved into a synthetic environment.
 
-| 단계 | 실험 | 대상 질문 |
+| Stage | Experiments | Question |
 |---|---|---|
-| 데이터 구축 | e1, e4, `finetune/build_sft_data.py` | 라벨 생성 방식, 사람 검수와 LLM 호출 예산의 배분 |
-| 모델 학습 | e3, `finetune/train_qlora.py` | LLM 산출물 중 학습 신호로 사용할 대상 (하드 / 집합 / 투표 분포) |
-| 평가 설계 | e2, e5, `finetune/evaluate.py` | 개선의 입증 방법, 지표가 유발하는 오판 |
+| Data construction | e1, e4, `finetune/build_sft_data.py` | How labels are generated; how to split the budget between human review and LLM calls |
+| Model training | e3, `finetune/train_qlora.py` | Which LLM output to use as the training signal (hard / set / vote distribution) |
+| Evaluation design | e2, e5, `finetune/evaluate.py` | How to demonstrate an improvement; which misjudgments a metric induces |
 
-모든 실험은 가설 → 수치 → 판정(지지 / 부분지지 / 기각) 형식으로 기록한다.
-
----
-
-## 9. 관찰 정리
-
-1. 평가셋 라벨의 출처가 평가 대상 모델과 동일하면, 산출 지표는 정확도가 아니라 재현도에 가깝다.
-2. 잡음이 있는 외부 신호가 동일 출처의 정교한 신호보다 순위 보존에서 우수하다. 단 편향 독립이 전제된다.
-3. 개선분의 대부분은 모델 변경이 아니라 라벨 품질에서 발생했다. 동일 예산에서는 데이터 추가보다
-   기존 데이터의 라벨 정정이 효율적이었다(e4).
-4. 평균 지표는 소수 구간의 개선을 흡수한다. 전체 EM만 관측하면 e5의 신호는 검출되지 않는다.
-5. 사전 기대가 높았던 세 기법(저비용 모델 합의 e1b, LLM-as-a-judge e1c, 개수 판정기 e5)은
-   기대와 다른 결과를 보였다.
+Every experiment is recorded as hypothesis → numbers → verdict (Supported / Partially supported / Rejected).
 
 ---
 
-## 10. 범위와 한계
+## 9. Observations
 
-- `lab/` 의 학습기는 선형 소프트맥스 회귀다. 결론의 적용 범위는 라벨 품질과 평가 설계이며
-  모델 구조나 학습 기법이 아니다. 실제 LoRA / QLoRA 경로는 `finetune/` 에 분리되어 있고,
-  해당 경로에서 검증한 것은 분류 성능이 아니라 파이프라인 동작이다.
-- `lab/` 에는 텍스트가 포함되지 않는다. 프롬프트 민감도, 출력 형식 붕괴, 토큰화, 긴 문맥은
-  `finetune/` 에서만 부분적으로 다룬다.
-- 외부 신호는 정답의 잡음 함수로 정의되어 있다. 따라서 e2의 τ = 1.00 은 이상적 조건의 값이다.
-  실제 외부 신호는 자체 편향을 가지며, 해당 조건은 ②'(오염된 신호)로 함께 측정했다(τ = 0.33).
-- e5에서는 합성 환경의 결론이 실무 결론과 상이했다. 합성 환경에서는 라벨 개수가
-  공존 허용 쌍 규칙으로 결정되어 판정기가 학습할 신호가 실제보다 많다.
-  차이와 원인은 [e5 문서](results/e5_cardinality.md)에 기록했다.
+1. If the eval-set labels come from the same source as the model being evaluated, the resulting
+   metric is closer to reproduction than to accuracy.
+2. A noisy outside signal preserves the ranking better than a precise signal from the same source.
+   This assumes the outside signal's bias is independent.
+3. In the original production pipeline that motivated this lab, most of the improvement came from
+   label quality rather than from changing the model. The lab fixes the learner, so it cannot test
+   that claim itself; what it does show is that, under the same call budget, correcting the labels of
+   existing data beat adding data (e4).
+4. Average metrics absorb improvements in small subsets. Looking only at overall EM, the signal in
+   e5 is not detected.
+5. Three techniques with high prior expectations (cheap-LLM agreement e1b, LLM-as-a-judge e1c,
+   count predictor e5) gave results different from what was expected.
 
 ---
 
-## 11. 구성
+## 10. Scope and limitations
 
-| 경로 | 내용 |
+- The learner in `lab/` is linear softmax regression. The conclusions apply to label quality and
+  evaluation design, not to model architecture or training technique. The real LoRA / QLoRA path is
+  separate, in `finetune/`, and what it verifies is that the pipeline runs, not classification performance.
+- `lab/` contains no text. Prompt sensitivity, output-format collapse, tokenization, and long context
+  are covered only partially, in `finetune/`.
+- The outside signal is defined as a noisy function of the ground truth. The τ = 1.00 in e2 is
+  therefore a value under idealized conditions. Real outside signals have their own bias; that
+  condition was measured as well, as ②' (contaminated signal), with τ = 0.33.
+- In e5, the conclusion in the synthetic environment differed from the conclusion in practice.
+  In the synthetic environment, the number of labels is determined by a rule on which pairs may
+  co-occur, so the predictor has more signal to learn than in reality.
+  The difference and its cause are documented in [the e5 report](results/e5_cardinality.md).
+
+---
+
+## 11. Layout
+
+| Path | Contents |
 |---|---|
-| `lab/world.py` | 정답이 정의된 합성 세계 (경계 중첩 쌍, '기타' 흡수 클래스, 실제 멀티라벨) |
-| `lab/labeler.py` | 라벨 생성 LLM, 합의 게이트, LLM-as-a-judge. 오차를 무작위·체계 성분으로 분리해 주입 |
-| `lab/small_model.py` | numpy 소프트맥스 회귀 (소프트 타깃 지원). 외부 의존성 없음 |
-| `lab/signals.py` | 파이프라인 외부 신호. 라벨 보정용 축과 평가용 축을 분리 |
-| `lab/metrics.py` | 집합 EM, 멀티행 EM, micro-F1, McNemar |
-| `lab/pipeline.py` | 세계 → 호출 → 게이트 → pseudo-label → 학습 → 세 채점표 |
-| `experiments/` | e1~e5, run_all.py |
-| `finetune/` | 한국어 텍스트 렌더링, LoRA / QLoRA SFT, 생성 평가 |
-| `results/` | 실행 결과 (md, json). RESULTS.md 는 자동 생성 |
-| `tests/` | 실험 설계의 무결성 검사 11건 |
+| `lab/world.py` | Synthetic world with defined ground truth (overlapping boundary pairs, an 'Other' absorbing class, genuine multi-label items) |
+| `lab/labeler.py` | Labeling LLM, consensus gate, LLM-as-a-judge. Errors are injected as separate random and systematic components |
+| `lab/small_model.py` | numpy softmax regression (supports soft targets). No external dependencies |
+| `lab/signals.py` | Signals from outside the pipeline. Separate axes for label correction and for evaluation |
+| `lab/metrics.py` | Set EM, multi-label-row EM, micro-F1, McNemar |
+| `lab/pipeline.py` | world → calls → gate → pseudo-labels → training → three scorecards |
+| `experiments/` | e1–e5, run_all.py |
+| `finetune/` | Korean text rendering, LoRA / QLoRA SFT, generation-based evaluation |
+| `results/` | Outputs (md, json). RESULTS.md is generated automatically |
+| `tests/` | 11 integrity checks on the experimental design |
+| `METHOD.md` | Procedure for building a non-circular scorecard (a procedure document, not results) |
 
 ```bash
-make all      # 전 실험 (약 65초)
-make test     # 테스트 (pytest 없이 동작)
-make e2       # 개별 실험
-make data     # SFT 데이터 생성
-make smoke    # LoRA 전 경로 검증
+make all      # all experiments (about 17 s on an Apple M1 laptop)
+make test     # tests (runs without pytest)
+make e2       # a single experiment
+make data     # generate SFT data
+make smoke    # check the full LoRA path (about 26 s on an Apple M1 laptop)
 ```
 
-소형 모델은 선형 소프트맥스 회귀로 고정했다. 학습기 복잡도를 낮추면 지표 변화가
-라벨 품질 효과로 귀속되고, 모델 분산에 의한 혼입이 줄어든다.
+The small model is fixed to linear softmax regression. Keeping the learner simple means that changes
+in the metrics can be attributed to label quality, with less confounding from model variance.
 
 ---
 
-## 12. 재현
+## 12. Reproducibility
 
-- `lab/`, `experiments/` 의존성은 numpy 하나. GPU·네트워크·데이터 다운로드 불필요.
-- 모든 난수에 고정 시드를 사용한다. 동일 커밋에서 반복 실행 시 동일한 결과가 산출된다
-  (신규 클론에서 `results/RESULTS.md` 바이트 동일 확인).
-- `results/*.json` 에 원수치, `*.md` 에 해석을 기록한다. 이 문서의 모든 수치는 해당 파일에서 인용했다.
+- `lab/` and `experiments/` depend only on numpy. No GPU, network access, or data download is needed.
+- All randomness uses fixed seeds. Repeated runs on the same commit produce identical results in the
+  same numpy/BLAS environment (`results/RESULTS.md` verified byte-identical on a fresh clone). Across
+  environments, last-digit floating-point differences can appear; the rounded numbers in the reports
+  are unchanged.
+- Raw numbers are in `results/*.json` and interpretation in `*.md`. Every number in this document is
+  taken from those files, except the smoke-run numbers in §6, which come from the `finetune/` smoke run
+  (`finetune/runs/lora/eval.json`).
 
 MIT License.

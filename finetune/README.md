@@ -1,26 +1,36 @@
-# finetune — pseudo-label 기반 LoRA / QLoRA 학습
+**English** | [한국어](README.ko.md)
 
-e1~e5 는 벡터 표현 위에서 수행된다. 동일한 결론이 실제 LLM 학습 경로에서도
-성립하는지는 별도 확인이 필요하다. 이 폴더가 그 연결부에 해당한다.
+# finetune: LoRA / QLoRA training on pseudo-labels
+
+Experiments e1-e5 run on vector representations. Whether the same conclusions
+hold on an actual LLM training path needs a separate check. This folder is that
+bridge.
 
 ```
-합성 세계 → 한국어 텍스트 → LLM 호출(투표 + 게이트) → pseudo-label
-                                                          ↓
-                       세 채점표로 채점 ← 생성·JSON 파싱 ← LoRA / QLoRA SFT
+synthetic world -> Korean text -> labeling LLM (votes + gate) -> pseudo-labels
+                                                                    |
+                                                                    v
+         scored against 3 references <- generation + JSON parsing <- LoRA / QLoRA SFT
 ```
 
-## 빠른 실행
+The labeling LLM is the simulated labeler in `lab/labeler.py`; no external API is called.
+
+## Quick start
 
 ```bash
 pip install -r finetune/requirements.txt
 
-python finetune/build_sft_data.py            # 데이터 생성 (~3초)
-python finetune/train_qlora.py --smoke \     # 다운로드·GPU 없이 전 경로 검증 (CPU ~70초)
+# build the data (~1 s)
+PYTHONHASHSEED=0 python finetune/build_sft_data.py
+# verify the full path without downloads or a GPU (CPU, train + eval about 26 s on an Apple M1 laptop)
+python finetune/train_qlora.py --smoke \
     --epochs 8 --bs 8 --grad-accum 1 --lr 8e-3 --limit 256
 python finetune/evaluate.py --smoke --limit 64
 ```
 
-실제 모델:
+`make smoke` runs the last two commands, and `make data` runs the first one.
+
+With a real model:
 
 ```bash
 python finetune/train_qlora.py --model Qwen/Qwen2.5-0.5B-Instruct --load-4bit \
@@ -28,74 +38,119 @@ python finetune/train_qlora.py --model Qwen/Qwen2.5-0.5B-Instruct --load-4bit \
 python finetune/evaluate.py --model Qwen/Qwen2.5-0.5B-Instruct --adapter finetune/runs/lora
 ```
 
-## `--smoke` 의 검증 범위
+## Why the data are in Korean
 
-학습 코드를 실행하지 않은 상태로 두면 실제 실행 시점에 결함이 드러난다.
-반면 검증 때마다 수 GB 체크포인트를 내려받는 것도 비효율적이다.
+The synthetic inquiry texts, the 12 category names, and the classification prompt
+are intentionally Korean. They are dataset content, not documentation: the strings
+in `render_text.py` are rendered into `finetune/data/*.jsonl`, stored in `meta.json`,
+and fed to the model verbatim. They are therefore kept byte-identical, with English
+glosses in the source comments. Code, comments, and console output are in English.
 
-`--smoke` 는 무작위 초기화된 2층 Llama(0.23M)와 문자 단위 토크나이저를 즉석에서 구성해
-CPU에서 전 경로를 실행한다.
+## What `--smoke` verifies
 
-| 검증되는 것 | 검증되지 않는 것 |
+Training code that is never executed reveals its bugs only at real run time.
+Downloading a multi-GB checkpoint for every check is wasteful, though.
+
+`--smoke` builds a randomly initialized two-layer Llama (about 0.25M parameters; the exact count depends on the character vocabulary) and a
+character-level tokenizer on the fly, and runs the full path on CPU.
+
+| Verified | Not verified |
 |---|---|
-| JSONL 적재 → 프롬프트/정답 토큰화 | 실제 모델의 분류 성능 |
-| 프롬프트 구간 -100 마스킹 | 4bit 양자화 경로 (CUDA 필요) |
-| LoRA 주입 / 학습 파라미터 비율 | 대규모 배치·분산 학습 |
-| 학습 루프 · 손실 감소 · 스케줄러 | 긴 문맥에서의 형식 붕괴 |
-| 어댑터 저장 → 재로딩 → 생성 | |
-| JSON 파싱 · 세 채점표 채점 | |
+| JSONL loading -> prompt/answer tokenization | Classification performance of a real model |
+| -100 masking of the prompt span | 4-bit quantization path (needs CUDA) |
+| LoRA injection / trainable-parameter ratio | Large-batch and distributed training |
+| Training loop, loss decrease, scheduler | Format collapse on long contexts |
+| Adapter save -> reload -> generation | |
+| JSON parsing and scoring against three references | |
 
-실측 (CPU, 256건, 8 epoch, ~67초):
+Measured on the committed data in `finetune/data` (CPU, 256 training rows, 8 epochs, 64 test rows;
+`make smoke` train + eval about 26 s on an Apple M1 laptop; torch 2.14, transformers 5.20, peft 0.21):
 
-| 항목 | 값 | 비고 |
+| Metric | Value | Note |
 |---|---:|---|
-| 학습 손실 | 5.65 → 0.15 | 8 epoch |
-| 형식 준수율 (JSON 파싱) | 1.000 | |
-| ① pseudo-label 평가셋 EM | 0.234 | |
-| ② 외부 신호 일관성 (top1) | 0.266 | |
-| ③ 정답 EM | 0.156 | 무작위 추측은 1/12 ≈ 0.083 |
-| pseudo-label 자체의 정확도 | 0.672 | 학습 라벨의 상한 |
+| Training loss | 5.54 -> 0.12 | first vs. last optimizer step (single-batch values) |
+| Format compliance (JSON parse) | 1.000 | |
+| (1) EM on the pseudo-label eval set | 0.234 | |
+| (2) Outside-signal agreement (top-1) | 0.266 | |
+| (3) True-label EM | 0.156 | random guessing: 1/12 ≈ 0.083 |
+| EM of the pseudo-labels themselves | 0.672 | reference ceiling set by the training labels |
 
-0.23M 무작위 초기화 모델의 정답 EM은 무작위 추측의 약 2배 수준이다.
-분류 성능 지표가 아니라 파이프라인 동작 확인용 수치다.
-`pseudo-label 자체의 정확도 0.672` 를 함께 기록하는 이유는 학습 라벨의 상한을 명시하기 위함이다.
+The true-label EM of a ~0.25M randomly initialized model is about twice the
+random-guess level. These numbers confirm that the pipeline works; they are not
+a measure of classification performance. The pseudo-label EM (0.672) is reported
+alongside as a reference ceiling imposed by the training labels.
 
-## 구현 시 주의점
+## Implementation notes
 
-- 프롬프트 마스킹 누락 시 모델이 카테고리 목록과 규칙 암기에 용량을 소비한다.
-  손실은 정상적으로 감소하지만 분류 성능은 오르지 않는다. 검출이 어려워 `SFTDataset` 에 주석으로 기록했다.
-- 어댑터는 base 가중치와 쌍으로만 유효하다. 스모크 base 는 무작위 초기화이므로, 저장하지 않고
-  평가 시점에 재생성하면 다른 난수의 base 위에 어댑터가 적용된다. 이 경우 학습 손실은 0.13까지
-  하락하지만 생성 결과는 전부 무효가 된다(`train_qlora.py` 주석 참조).
-  사전학습 모델 사용 시에는 발생하지 않으나, 학습 정상·생성 비정상 상황의 원인 후보에 해당한다.
-- 카테고리 코드는 두 자리로 고정한다. 다수 LLM이 숫자를 자릿수 단위로 토큰화하므로
-  `3` 과 `11` 이 혼재하면 생성 길이가 변동하고 파싱 실패율이 상승한다.
-- 행별 가중 손실을 직접 구현한다. HF 기본 손실은 배치 단위 평균이라 행 가중치를 적용할 수 없다.
-  e1 의 등급(agree/partial/review)을 학습 가중치로 사용하려면(`--grade-weight`) 별도 손실이 필요하다.
-- gradient checkpointing 은 DDP 의 reduction 훅과 충돌한다. 단일 프로세스에서만 활성화한다.
-  멀티모달 계열 LoRA 에서는 미사용 타워의 파라미터가 unused 로 판정되어
-  `ddp_find_unused_parameters=True` 가 필요하다.
+- If prompt masking is omitted, the model spends capacity memorizing the category
+  list and rules. The loss still falls normally but classification does not improve.
+  Because this is hard to detect, it is documented in a comment on `SFTDataset`.
+- An adapter is valid only together with its base weights. The smoke base is
+  randomly initialized, so if it is not saved but rebuilt at evaluation time, the
+  adapter ends up on a base drawn from different random numbers. Training loss then
+  still drops to 0.13 while every generation is invalid (see the comment in
+  `train_qlora.py`). This cannot happen with a pretrained model, but it is a
+  candidate cause whenever training looks healthy and generation does not.
+- Category codes have a fixed width of two digits. Many LLM tokenizers split
+  numbers digit by digit, so mixing `3` and `11` makes the generation length vary
+  and raises the parse-failure rate.
+- The per-row weighted loss is implemented by hand. The default HF loss averages
+  over the batch, so per-row weights cannot be applied. Using the e1 grade
+  (agree/partial/review) as a training weight (`--grade-weight`) requires a custom loss.
+- Gradient checkpointing conflicts with DDP reduction hooks; it is enabled only in
+  a single process. In multimodal LoRA setups, parameters of unused towers are
+  flagged as unused, which requires `ddp_find_unused_parameters=True`.
 
-## 데이터 형식
+## Data format
 
-`finetune/data/*.jsonl` 한 줄:
+One line of `finetune/data/*.jsonl`:
 
 ```json
-{"id": 12, "text": "안녕하세요. 로그인이 안 됩니다 ...",
+{"id": 1, "text": "확인 부탁드려요. 아이디를 입력해도 넘어가지 않아요 로그인이 안 됩니다 ...",
  "completion": "{\"labels\": [\"05\"]}",
  "pseudo_labels": ["05"], "grade": "partial", "n_calls": 7,
  "vote_dist": [0.0, ...],
- "truth": ["05"], "outside_signal": 1}
+ "truth": ["05"], "outside_signal": 3}
 ```
 
-- `pseudo_labels` / `grade` / `n_calls` / `vote_dist` — 학습 사용. LLM 호출로만 생성된다.
-- `truth` / `outside_signal` — 평가 전용. 학습 스크립트는 이 필드를 참조하지 않는다.
-  합성 실험에서 정답이 학습 경로에 유입되면 결과 해석이 불가능해진다.
-- `prompt` 는 저장하지 않고 `text` 에서 재생성한다
-  (행마다 카테고리 목록을 중복 저장하면 파일 크기가 3배가 된다).
+- `pseudo_labels` / `grade` / `n_calls` / `vote_dist`: used for training; produced
+  only by the (simulated) labeling-LLM calls.
+- `truth` / `outside_signal`: evaluation only. The training script never reads
+  these fields. If the true labels leaked into the training path of a synthetic
+  experiment, the results could not be interpreted.
+- `prompt` is not stored; it is rebuilt from `text` (storing the full category list
+  in every row would roughly triple the file size).
+- `summary.json` keeps Korean keys (multi-label rate, split-vote rate, mean number
+  of calls, pseudo-label accuracy against the true label) so the committed file
+  stays byte-identical to the generator output.
 
-## 카테고리·문구에 대한 고지
+### Why some rows look mislabeled
 
-`render_text.py` 의 카테고리 12개와 문구는 전부 합성 생성기가 만든 가상의 문자열이며,
-특정 서비스·조직·실제 데이터와 무관하다.
-`world.py` 의 구조(흡수 클래스 1개, 경계 중첩 쌍 3개, 공존 허용 쌍 2개)에 명칭만 부여한 것이다.
+Some rows read as if `text` and `truth` disagree, for example an obvious stock-out
+question whose true label is something else, or a unanimous pseudo-label that is
+plainly wrong for the wording. This is expected. The labels, votes and truth are
+all decided in the vector world (`lab/world.py`, `lab/labeler.py`); the simulated
+labeling LLM never reads the text. The text is rendered afterwards by sampling
+phrases in proportion to the posterior, so phrases from other categories mix in.
+The text is therefore a vehicle for exercising the LoRA / QLoRA path end to end,
+not an input from which the labels can be inferred, and the smoke numbers are
+pipeline checks rather than classification results.
+
+### Reproducibility
+
+`build_sft_data.py` seeds the text renderer with `hash(split)`, and Python salts
+string hashes per process. Without a fixed `PYTHONHASHSEED`, the labels and all
+other fields are reproduced exactly, but the wording of the rendered `text` differs
+between runs. Set `PYTHONHASHSEED` (e.g. `0`) for byte-identical output. The
+committed `finetune/data` was generated before the seed was pinned, so data
+regenerated with `PYTHONHASHSEED=0` (as `make data` does) has different `text`
+wording than the committed files. The smoke numbers above were measured on the
+committed data; on regenerated data the smoke loss can differ slightly (in our run
+5.55 -> 0.18 instead of 5.54 -> 0.12).
+
+## Note on categories and phrases
+
+The 12 categories and all phrases in `render_text.py` are fictional strings produced
+by the synthetic generator and are unrelated to any real service, organization, or
+dataset. They only attach names to the structure of `world.py` (one absorbing class,
+three boundary-overlap pairs, two co-occurrence pairs).

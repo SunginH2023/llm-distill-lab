@@ -1,38 +1,38 @@
 {
   "slug": "e5_cardinality",
-  "title": "e5 · 개수 문제: 같은 실험, 지표에 따라 뒤집히는 결론",
-  "hypothesis": "라벨 개수를 따로 맞히는 모델이 확률비 한 줄을 이기는가",
+  "title": "e5 · The count problem: same experiment, conclusion flips with the metric",
+  "hypothesis": "Does a model that predicts the label count separately beat the one-line probability ratio?",
   "decoding": [
     [
-      "확률비 p2/p1",
-      0.6155278974433669,
+      "Probability ratio p2/p1",
+      0.6155283551555383,
       0.6861361361361361,
       0.05364151766245094,
       0.12177177177177177
     ],
     [
-      "개수 판정기 P(멀티)",
-      0.1635639499327599,
+      "Count predictor P(multi)",
+      0.1635639368799719,
       0.6883383383383384,
       0.18098560837331007,
       0.11201201201201201
     ],
     [
-      "결합 P(멀티)×(p2/p1)",
-      0.07340563289111506,
+      "Combined P(multi)×(p2/p1)",
+      0.07340565859477666,
       0.6923923923923924,
       0.07457479284779764,
       0.11916916916916917
     ],
     [
-      "(참고) 멀티라벨을 아예 안 예측",
+      "(Reference) never predict multi-label",
       "-",
       0.7279279279279279,
       0.0,
       0.0
     ],
     [
-      "개수를 알려줬을 때 (상한)",
+      "Count given (upper bound)",
       "-",
       0.7836336336336336,
       0.4853903183602268,
@@ -50,7 +50,7 @@
       "b01": 376,
       "b10": 84,
       "z": 13.567944959896566,
-      "p": 6.203707076610476e-42
+      "p": 6.203707076610477e-42
     }
   },
   "pareto": [
@@ -169,5 +169,5 @@
       0.0
     ]
   ],
-  "verdict": "❌ 기각: H5b 기각. 전체 EM 최적 임계값과 멀티행 최적 임계값이 다르고, 전체 EM 만 최대화하면 답은 '멀티라벨을 아예 예측하지 마라'(0.7279)로 수렴한다. 즉 t 는 튜닝해서 얻는 값이 아니라 어느 쪽 오류를 감당할지 정하는 운영 결정이다. 개수를 알려줬을 때의 상한 0.7836 이 남은 여지를 알려준다."
+  "verdict": "❌ Rejected: H5b rejected. The threshold that is optimal for overall EM differs from the one optimal for multi-label rows, and maximizing overall EM alone converges to 'never predict multi-label' (0.7279). That is, t is not a value obtained by tuning but an operational decision about which kind of error to accept. The upper bound when the count is given, 0.7836, shows the remaining headroom."
 }

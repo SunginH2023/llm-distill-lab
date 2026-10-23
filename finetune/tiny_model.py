@@ -1,15 +1,16 @@
-"""다운로드 없이 도는 초소형 모델 + 문자 단위 토크나이저 (스모크 전용).
+"""A tiny download-free model plus a character-level tokenizer (smoke test only).
 
-왜 필요한가: 학습 스크립트가 정말 도는지 확인하려고 매번 수 GB짜리 체크포인트를
-받을 수는 없다. 그렇다고 코드를 짜 놓고 "GPU 생기면 돌려보죠" 하는 것도 곤란하다.
+Why: downloading a multi-GB checkpoint every time just to check that the training
+script runs is wasteful, yet leaving the code untested until a GPU is available
+is not acceptable either.
 
-그래서 무작위 초기화된 2층짜리 Llama 를 그 자리에서 만들고, 문자 단위 토크나이저를
-붙여 CPU에서 몇 초 만에 전 경로를 통과시킨다. 검증되는 것:
+So a randomly initialized two-layer Llama is built on the fly and paired with a
+character-level tokenizer, which exercises the full path on CPU in seconds:
 
-    JSONL 적재 → 프롬프트/정답 토큰화 → 프롬프트 구간 마스킹 → LoRA 주입
-    → 학습 루프(손실 감소) → 생성 → JSON 파싱 → 채점
+    JSONL loading -> prompt/answer tokenization -> prompt-span masking -> LoRA injection
+    -> training loop (loss decreases) -> generation -> JSON parsing -> scoring
 
-검증되지 않는 것: 실제 모델의 성능. 그건 `--model <HF id>` 로 돌려야 한다.
+Not verified: the performance of a real model. That requires `--model <HF id>`.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from dataclasses import dataclass
 
 @dataclass
 class CharTokenizer:
-    """문자 단위 토크나이저. 어휘를 데이터에서 그 자리에서 만든다."""
+    """Character-level tokenizer whose vocabulary is built on the fly from the data."""
     itos: list[str]
     stoi: dict[str, int]
     pad_id: int
@@ -43,7 +44,7 @@ class CharTokenizer:
 
 
 def build_tiny_causal_lm(vocab_size: int):
-    """무작위 초기화 Llama (2층, hidden 96). 다운로드 없음."""
+    """Randomly initialized Llama (2 layers, hidden size 96). No download."""
     from transformers import LlamaConfig, LlamaForCausalLM
 
     cfg = LlamaConfig(
@@ -56,16 +57,16 @@ def build_tiny_causal_lm(vocab_size: int):
         max_position_embeddings=2048,
         pad_token_id=0,
         eos_token_id=1,
-        tie_word_embeddings=False,   # lm_head 를 따로 학습할 수 있게 (스모크용)
+        tie_word_embeddings=False,   # untied so lm_head can be trained separately (smoke test)
     )
     return LlamaForCausalLM(cfg)
 
 
 class HFTokenizerAdapter:
-    """AutoTokenizer 를 CharTokenizer 와 같은 최소 인터페이스로 감싼다.
+    """Wrap an AutoTokenizer in the same minimal interface as CharTokenizer.
 
-    transformers 버전마다 `__call__` 시그니처가 조금씩 달라서, 학습 루프가
-    버전에 흔들리지 않도록 encode/decode 두 개만 쓰기로 고정한다.
+    The `__call__` signature differs slightly across transformers versions, so the
+    training loop relies only on encode/decode to stay version-independent.
     """
 
     def __init__(self, tok):

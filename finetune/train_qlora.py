@@ -1,17 +1,18 @@
-"""pseudo-label 로 작은 모델을 LoRA / QLoRA SFT 한다.
+"""LoRA / QLoRA SFT of a small model on pseudo-labels.
 
-    # 다운로드·GPU 없이 전 경로 검증 (CPU, 수십 초)
+    # Verify the full path without downloads or a GPU (CPU, tens of seconds)
     python finetune/train_qlora.py --smoke
 
-    # 실제 모델로 4bit QLoRA
+    # 4-bit QLoRA on a real model
     python finetune/train_qlora.py --model Qwen/Qwen2.5-0.5B-Instruct --load-4bit \
         --epochs 1 --bs 4 --grad-accum 4 --lr 2e-4 --lora-r 32
 
-학습 대상은 정답 구간뿐. 프롬프트 토큰은 라벨을 -100 으로 마스킹한다.
-이걸 빠뜨리면 모델이 프롬프트(카테고리 목록·규칙)를 외우는 데 용량을 쓴다.
-손실은 예쁘게 떨어지는데 정작 분류는 안 되는, 눈치채기 어려운 실패.
+Only the answer span is trained on; prompt tokens have their labels masked to -100.
+Without this mask the model spends capacity memorizing the prompt (category list
+and rules). The loss still drops nicely while classification does not improve,
+a failure that is hard to notice.
 
-이 스크립트는 `truth` 필드를 읽지 않는다. 학습에 쓰는 건 pseudo-label 뿐이다.
+This script never reads the `truth` field. Only pseudo-labels are used for training.
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ LORA_TARGETS = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", 
 
 
 class SFTDataset(Dataset):
-    """프롬프트는 마스킹, 정답만 학습."""
+    """Mask the prompt; train only on the answer."""
 
     def __init__(self, rows, tok, max_len: int, soft_weight: bool = False):
         self.ex = []
@@ -45,7 +46,7 @@ class SFTDataset(Dataset):
             c = tok.encode(" " + r["completion"]) + [tok.eos_id]
             ids = (p + c)[:max_len]
             labels = ([-100] * len(p) + c)[:max_len]
-            # e1 의 등급을 학습 가중치로 쓸 수 있게 남겨 둔다 (기본은 균등).
+            # Optionally use the e1 grade as a training weight (uniform by default).
             w = 1.0
             if soft_weight:
                 w = {"agree": 1.0, "partial": 0.7, "review": 0.3}[r["grade"]]
@@ -72,10 +73,11 @@ def collate(batch, pad_id: int):
 
 
 def weighted_causal_loss(logits, labels, weights):
-    """행별 가중치를 적용한 causal LM 손실.
+    """Causal LM loss with per-row weights.
 
-    HF 기본 손실은 배치 전체를 한 번에 평균 내서 행 가중치를 걸 수 없다.
-    e1 의 등급(agree/partial/review)을 학습 가중치로 실험하려면 직접 써야 한다.
+    The default HF loss averages over the whole batch at once, so per-row weights
+    cannot be applied. Using the e1 grade (agree/partial/review) as a training
+    weight therefore requires a custom loss.
     """
     logits = logits[:, :-1, :]
     labels = labels[:, 1:]
@@ -95,14 +97,14 @@ def load_jsonl(path: _p.Path, limit: int | None = None):
 def build_model(args, tok):
     if args.smoke:
         model = build_tiny_causal_lm(len(tok))
-        print(f"  [smoke] 무작위 초기화 tiny-Llama, "
-              f"파라미터 {sum(p.numel() for p in model.parameters()) / 1e6:.2f}M")
+        print(f"  [smoke] randomly initialized tiny-Llama, "
+              f"{sum(p.numel() for p in model.parameters()) / 1e6:.2f}M parameters")
         return model
 
     from transformers import AutoModelForCausalLM
     kw = {"dtype": torch.bfloat16 if torch.cuda.is_available() else torch.float32}
     if args.load_4bit:
-        # QLoRA: 4bit NF4 + double quant, 계산은 bf16 으로.
+        # QLoRA: 4-bit NF4 + double quantization, compute in bf16.
         from transformers import BitsAndBytesConfig
         kw["quantization_config"] = BitsAndBytesConfig(
             load_in_4bit=True,
@@ -123,9 +125,9 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default="finetune/data")
     ap.add_argument("--out", default="finetune/runs/lora")
-    ap.add_argument("--model", default=None, help="HF 모델 id (미지정 시 --smoke 필요)")
-    ap.add_argument("--smoke", action="store_true", help="다운로드·GPU 없이 전 경로 검증")
-    ap.add_argument("--load-4bit", action="store_true", help="QLoRA (CUDA 필요)")
+    ap.add_argument("--model", default=None, help="HF model id (required unless --smoke)")
+    ap.add_argument("--smoke", action="store_true", help="verify the full path without downloads or a GPU")
+    ap.add_argument("--load-4bit", action="store_true", help="QLoRA (requires CUDA)")
     ap.add_argument("--grad-checkpoint", action="store_true")
     ap.add_argument("--epochs", type=int, default=1)
     ap.add_argument("--max-steps", type=int, default=-1)
@@ -137,13 +139,13 @@ def main() -> None:
     ap.add_argument("--lora-alpha", type=int, default=32)
     ap.add_argument("--lora-dropout", type=float, default=0.05)
     ap.add_argument("--grade-weight", action="store_true",
-                    help="표가 갈린 행의 학습 가중치를 낮춘다 (e1 등급 활용)")
+                    help="down-weight rows with split votes (uses the e1 grade)")
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
 
     if not args.smoke and not args.model:
-        ap.error("--model 을 주거나 --smoke 를 쓰세요")
+        ap.error("pass --model or use --smoke")
 
     torch.manual_seed(args.seed)
     random.seed(args.seed)
@@ -162,20 +164,22 @@ def main() -> None:
     ds = SFTDataset(train_rows, tok, args.max_len, soft_weight=args.grade_weight)
     dl = DataLoader(ds, batch_size=args.bs, shuffle=True,
                     collate_fn=lambda b: collate(b, tok.pad_id))
-    print(f"  학습 {len(ds)}건 · 배치 {args.bs} × 누적 {args.grad_accum} "
-          f"= 유효배치 {args.bs * args.grad_accum}")
+    print(f"  train {len(ds)} rows · batch {args.bs} x accum {args.grad_accum} "
+          f"= effective batch {args.bs * args.grad_accum}")
 
     model = build_model(args, tok)
-    # 스모크의 base 는 무작위 초기화라 어딘가 저장해 두지 않으면 평가 때 재현이 안 된다.
-    # (처음에 이걸 빠뜨려서, 학습 손실은 0.13까지 떨어졌는데 생성은 전부 깨졌다.
-    #  어댑터를 '다른 난수로 초기화된 base' 위에 얹고 있었던 것.)
+    # The smoke base is randomly initialized, so it must be saved or it cannot be
+    # reproduced at evaluation time. (An early version missed this: training loss
+    # fell to 0.13 but every generation was broken, because the adapter was being
+    # applied to a base initialized with different random numbers.)
     base_state = ({k: v.detach().clone() for k, v in model.state_dict().items()}
                   if args.smoke else None)
 
     from peft import LoraConfig, get_peft_model
-    # 스모크에서는 lm_head 도 같이 학습한다. base 가 무작위 초기화라 어댑터만으로는
-    # 출력 토큰 분포 자체를 배울 수 없어서, 형식(JSON)조차 못 만든다.
-    # 사전학습된 실제 모델에서는 필요 없다 (그래서 스모크에서만 켠다).
+    # In smoke mode lm_head is trained as well. With a randomly initialized base the
+    # adapter alone cannot learn the output token distribution, so the model fails
+    # to produce even the JSON format. A real pretrained model does not need this,
+    # hence it is enabled only for --smoke.
     extra = ["lm_head"] if args.smoke else None
     model = get_peft_model(model, LoraConfig(
         r=args.lora_r, lora_alpha=args.lora_alpha, lora_dropout=args.lora_dropout,
@@ -183,14 +187,14 @@ def main() -> None:
         bias="none", task_type="CAUSAL_LM"))
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model.parameters())
-    print(f"  LoRA r={args.lora_r} · 학습 파라미터 {trainable:,} / {total:,} "
+    print(f"  LoRA r={args.lora_r} · trainable params {trainable:,} / {total:,} "
           f"({100 * trainable / total:.2f}%)")
 
     device = "cuda" if (torch.cuda.is_available() and not args.smoke) else "cpu"
     model.to(device)
     model.train()
     if args.grad_checkpoint:
-        # 주의: DDP 와 같이 쓰면 reduction 훅과 충돌한다. 단일 프로세스에서만 켤 것.
+        # Caution: conflicts with DDP reduction hooks. Enable only in a single process.
         model.gradient_checkpointing_enable()
 
     opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad],
@@ -248,7 +252,7 @@ def main() -> None:
         (out_dir / "char_vocab.json").write_text(json.dumps(tok.itos, ensure_ascii=False),
                                                  encoding="utf-8")
         torch.save(base_state, out_dir / "tiny_base.pt")
-    print(f"\n  손실 {first_loss:.4f} → {last_loss:.4f}  ({time.time() - t0:.1f}s, {device})")
+    print(f"\n  loss {first_loss:.4f} → {last_loss:.4f}  ({time.time() - t0:.1f}s, {device})")
     print(f"  → {out_dir}")
 
 

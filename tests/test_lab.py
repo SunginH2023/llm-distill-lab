@@ -1,8 +1,8 @@
-"""실험이 말이 되려면 먼저 참이어야 하는 것들.
+"""Things that must hold before any experiment can make sense.
 
-이 테스트들은 성능을 재지 않는다. 실험 설계가 스스로 무너지지 않는지만 본다.
-가장 중요한 건 `test_oracle_is_never_used_for_training` 계열이다 —
-합성 실험에서 오라클이 학습 경로로 새면 모든 결과가 무의미해진다.
+These tests do not measure performance. They only check that the experimental design does not undermine itself.
+The most important ones are the `test_oracle_is_never_used_for_training` family —
+if the oracle leaks into the training path of a synthetic experiment, every result becomes meaningless.
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ def test_world_is_deterministic():
 
 def test_truth_is_bayes_optimal_top1():
     w = make_world(WorldConfig(n=5000))
-    # 사후확률 1등은 언제나 진짜 라벨 집합 안에 있어야 한다
-    # (집합의 argmax 는 인덱스 순서를 따르므로 그걸로 비교하면 안 된다 — 한 번 속았다)
+    # The posterior top-1 must always be inside the true label set
+    # (argmax over the set follows index order, so it must not be used for this comparison — this fooled us once)
     top1 = np.argmax(w.post, axis=1)
     assert w.truth[np.arange(w.n), top1].all()
     assert w.truth.sum(axis=1).min() >= 1
@@ -41,7 +41,7 @@ def test_multi_label_rate_is_realistic():
 
 
 def test_more_votes_improve_primary_label():
-    """표를 늘리면 라벨 '선택'은 단조로 좋아져야 한다 (개수는 별개 — e4/e5)."""
+    """More votes must monotonically improve label 'selection' (the count is a separate matter — e4/e5)."""
     lab = pipeline.build(WorldConfig(n=20000))
     truth_top1 = lab.truth_top1("train")
     acc = [float((lab.key("train", k).primary == truth_top1).mean()) for k in (1, 3, 5, 7)]
@@ -58,7 +58,7 @@ def test_gate_separates_quality():
 
 
 def test_weak_axis_is_independent_of_teacher():
-    """외부 신호는 라벨링 LLM을 거치지 않고 정답에서 직접 파생돼야 한다."""
+    """The outside signal must be derived directly from the truth, without passing through the labeling LLM."""
     lab = pipeline.build(WorldConfig(n=20000))
     ax = lab.axis_eval
     truth_group = ax.group_of[lab.world.primary]
@@ -67,7 +67,7 @@ def test_weak_axis_is_independent_of_teacher():
 
 
 def test_axes_for_fixing_and_scoring_are_disjoint():
-    """정제에 쓴 축으로 평가하면 그것도 순환이다. 두 축은 달라야 한다."""
+    """Evaluating with the axis used for refinement is also circular. The two axes must differ."""
     lab = pipeline.build(WorldConfig(n=2000))
     assert not np.array_equal(lab.axis_fix.group_of, lab.axis_eval.group_of)
     assert not np.array_equal(lab.axis_fix.observed, lab.axis_eval.observed)

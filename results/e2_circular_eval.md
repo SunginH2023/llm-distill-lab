@@ -1,34 +1,34 @@
-## e2 순환 채점표는 순위를 뒤집는다
+## e2 · A circular scorecard flips the ranking
 
-가설 — 라벨링 LLM pseudo-label 채점 / 파이프라인 외부 신호 채점 / 진짜 정답 채점 — 셋의 순위가 같은가
+Hypothesis — Scoring with labeling-LLM pseudo-labels / with an outside-the-pipeline signal / with the true labels — do the three give the same ranking?
 
-작은 모델 여섯 개. 구조·하이퍼파라미터는 전부 같고 학습에 쓴 라벨만 다르다. 외부 신호 채점은 그 축이 상위 두 후보를 구분해 주는 행에서만 잰다 (축 '처리 조직 배정', 그룹 7개, 관측잡음 25%).
+Six small models. Architecture and hyperparameters are identical; only the training labels differ. The outside-signal score is measured only on rows where that axis distinguishes the top two candidates (axis 'routing-target assignment', 7 groups, observation noise 25%).
 
-| 작은 모델 (학습 라벨) | ① pseudo-label 평가셋 | ② 외부 신호 | ③ 진짜 정답 | pseudo EM | 진짜 EM |
+| Small model (training labels) | ① Pseudo-label eval set | ② Outside signal | ③ True labels | Pseudo EM | True EM |
 |---|---:|---:|---:|---:|---:|
-| 1회 | 0.8279 | 0.6542 | 0.7888 | 0.6906 | 0.6514 |
-| 3회 | 0.8285 | 0.6452 | 0.7661 | 0.6934 | 0.6509 |
-| 5회 | 0.8303 | 0.6507 | 0.7796 | 0.6990 | 0.6597 |
-| 7회 | 0.8287 | 0.6515 | 0.7806 | 0.7021 | 0.6671 |
-| 5회+외부신호 보정 | 0.8260 | 0.6663 | 0.8045 | 0.6945 | 0.6877 |
-| 7회+외부신호 보정 | 0.8238 | 0.6708 | 0.8124 | 0.6965 | 0.6992 |
+| 1 call | 0.8279 | 0.6542 | 0.7888 | 0.6906 | 0.6514 |
+| 3 calls | 0.8285 | 0.6452 | 0.7661 | 0.6934 | 0.6509 |
+| 5 calls | 0.8303 | 0.6507 | 0.7796 | 0.6990 | 0.6597 |
+| 7 calls | 0.8287 | 0.6515 | 0.7806 | 0.7021 | 0.6671 |
+| 5 calls + outside-signal fix | 0.8260 | 0.6663 | 0.8045 | 0.6945 | 0.6877 |
+| 7 calls + outside-signal fix | 0.8238 | 0.6708 | 0.8124 | 0.6965 | 0.6992 |
 
-순위만 뽑아 보면 (왼쪽이 1등):
+Extracting only the rankings (leftmost is first):
 
-| 채점표 | 매긴 순위 | 정답과의 순위상관 τ |
+| Scorecard | Ranking produced | Rank correlation τ with the truth |
 |---|---:|---:|
-| ① pseudo-label 로 만든 평가셋 (같은 출처) | 5회 > 7회 > 3회 > 1회 > 5회+외부신호 보정 > 7회+외부신호 보정 | -0.7333 |
-| ② 파이프라인 외부에서 온 신호 | 7회+외부신호 보정 > 5회+외부신호 보정 > 1회 > 7회 > 5회 > 3회 | 1.0000 |
-| ②' 외부 신호이나 동일 편향으로 오염됨 | 7회+외부신호 보정 > 5회+외부신호 보정 > 3회 > 5회 > 1회 > 7회 | 0.3333 |
-| ③ 정답 (오라클) | 7회+외부신호 보정 > 5회+외부신호 보정 > 1회 > 7회 > 5회 > 3회 | 1.0000 |
+| ① Eval set built from pseudo-labels (same source) | 5 calls > 7 calls > 3 calls > 1 call > 5 calls + outside-signal fix > 7 calls + outside-signal fix | -0.7333 |
+| ② Signal from outside the pipeline | 7 calls + outside-signal fix > 5 calls + outside-signal fix > 1 call > 7 calls > 5 calls > 3 calls | 1.0000 |
+| ②' Outside signal contaminated with the same bias | 7 calls + outside-signal fix > 5 calls + outside-signal fix > 3 calls > 5 calls > 1 call > 7 calls | 0.3333 |
+| ③ Truth (oracle) | 7 calls + outside-signal fix > 5 calls + outside-signal fix > 1 call > 7 calls > 5 calls > 3 calls | 1.0000 |
 
-②' 은 파이프라인 외부에서 왔으나 라벨링 LLM과 동일한 방향으로 편향된 축이다 (관측의 35%가 라벨링 LLM이 선호하는 그룹으로 끌려간다 — 운영 자동 규칙을 라벨링 LLM도 학습해 버린 상황). τ가 1.00 에서 0.33 로 떨어진다. 외부 출처라는 조건만으로는 불충분하고, 라벨링 LLM 편향과 독립인지까지 따져야 한다. 실무에서 부서 배정 축을 쓸 때 자동배정분을 빼고 다시 검정해야 했던 이유가 이것이다.
+②' is an axis that comes from outside the pipeline but is biased in the same direction as the labeling LLM (35% of observations are pulled toward the group the labeling LLM favors — the situation where the labeling LLM has also learned an operational auto-routing rule). τ drops from 1.00 to 0.33. Coming from an outside source is not sufficient on its own; one must also check that it is independent of the labeling LLM's bias. This is why, when the routing axis was used in practice, it had to be re-tested with the auto-routed items removed.
 
-pseudo-label 평가셋이 뽑은 1등은 5회, 진짜 1등은 7회+외부신호 보정. 이 평가셋만 보고 모델을 고르면 정답 기준 3.28pp 를 두고 온다. 외부 신호의 절대 점수는 0.671 로 낮지만 — 이 축이 원래 거칠기 때문이다 — 순위는 맞다. 절대 점수를 보고하지 말고 상대 비교에만 쓸 것.
+The pseudo-label eval set picks 5 calls as first; the true first is 7 calls + outside-signal fix. Choosing a model by this eval set alone leaves 3.28pp on the table against the truth. The outside signal's absolute score is low at 0.671 — because the axis is inherently coarse — but its ranking is right. Do not report its absolute score; use it only for relative comparison. Caveat: the ① scores of the models without the fix are very close (0.8279–0.8303), and there are only 6 models and a single seed, so each τ carries uncertainty.
 
-라벨링 LLM의 체계 편향 세기를 0부터 키우면서 두 채점표의 순위상관을 다시 잰다. 편향이 0이면 pseudo-label 평가셋도 정직하다 — 문제는 편향이 있을 때만 생긴다. (실제 LLM에서 편향 0 은 없다.)
+Increasing the strength of the labeling LLM's systematic bias from 0, we re-measure the rank correlation of both scorecards. With bias 0 the pseudo-label eval set does not reverse the ranking (τ = +0.33, weakly positive) — the reversal appears only when there is bias. (Real LLMs are unlikely to have bias 0.)
 
-| 편향 β | ① pseudo-label 평가셋 τ | ② 외부 신호 τ | 평균 정답 top1 |
+| Bias β | ① Pseudo-label eval set τ | ② Outside signal τ | Mean true top1 |
 |---|---:|---:|---:|
 | 0.0000 | 0.3333 | 1.0000 | 0.8715 |
 | 0.4000 | -0.3333 | 1.0000 | 0.8535 |
@@ -36,4 +36,4 @@ pseudo-label 평가셋이 뽑은 1등은 5회, 진짜 1등은 7회+외부신호 
 | 1.1000 | -1.0000 | 1.0000 | 0.7911 |
 | 1.6000 | -1.0000 | 1.0000 | 0.7443 |
 
-판정 — ✅ 지지. H2 지지. pseudo-label 평가셋의 순위상관 τ=-0.73, 외부 신호 τ=1.00. 라벨링 LLM pseudo-label 로 매긴 1등은 정답 기준 1등이 아니었다. 절대 점수가 낮은 거친 축이, 절대 점수가 높은 순환 축보다 나은 채점표다.
+Verdict — ✅ Supported. H2 supported. Rank correlation of the pseudo-label eval set τ=-0.73, outside signal τ=1.00. The model ranked first by labeling-LLM pseudo-labels was not first against the truth. A coarse axis with low absolute scores is a better scorecard than a circular axis with high absolute scores.

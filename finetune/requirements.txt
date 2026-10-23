@@ -1,7 +1,7 @@
-# finetune/ 만 이 의존성을 씁니다. lab/ 과 experiments/ 는 numpy 하나로 돕니다.
+# Only finetune/ needs these dependencies. lab/ and experiments/ run on numpy alone.
 torch>=2.1
 transformers>=4.40
 peft>=0.10
 accelerate>=0.28
-# QLoRA(4bit)를 쓸 때만 필요합니다. CUDA 환경 전용.
+# Needed only for QLoRA (4-bit). CUDA environments only.
 # bitsandbytes>=0.43

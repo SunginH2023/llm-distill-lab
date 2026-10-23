@@ -1,12 +1,12 @@
-"""실험들이 공유하는 조립 라인.
+"""The assembly line shared by all experiments.
 
-    세계 생성 → 라벨링 LLM 투표 → 합의 게이트 → pseudo-label → 작은 모델 학습 → 세 채점표로 채점
+    build world -> labeling-LLM votes -> consensus gate -> pseudo-labels -> train small model -> score with three scorecards
 
-채점표가 셋인 것이 이 repo 의 요점이다.
+Having three scorecards is the point of this repo.
 
-    circular : 라벨링 LLM이 만든 pseudo-label            — 실무에서 유일하게 관측 가능한 것
-    weak     : 파이프라인 외부 신호 (거칠고 잡음 많다) — 실무에서 만들 수 있는 것
-    oracle   : 진짜 정답                     — 합성 세계에만 존재. 위 둘을 검증하는 데만 쓴다
+    circular : pseudo-labels produced by the labeling LLM      - the only thing observable in production
+    weak     : signals from outside the pipeline (coarse, noisy) - what can be built in production
+    oracle   : the true labels                                 - exists only in the synthetic world; used solely to validate the two above
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import numpy as np
 from . import labeler, metrics, signals, small_model
 from .world import World, WorldConfig, make_world, split_indices
 
-# 비율로 둔다 — 작은 세계로도 (테스트용) 그대로 돌아가야 한다.
+# Kept as fractions - must run unchanged on small worlds too (for tests).
 SPLIT_FRACTIONS = {"train": 0.50, "val": 0.133, "test": 0.333}
 
 
@@ -26,11 +26,11 @@ SPLIT_FRACTIONS = {"train": 0.50, "val": 0.133, "test": 0.333}
 class Lab:
     world: World
     idx: dict[str, np.ndarray]
-    axis_fix: signals.WeakAxis     # 라벨 정제 전용 축
-    axis_eval: signals.WeakAxis    # 평가 전용 축 — 정제에 절대 쓰지 않는다
+    axis_fix: signals.WeakAxis     # axis used only for label refinement
+    axis_eval: signals.WeakAxis    # axis used only for evaluation - never used for refinement
     _teachers: dict = field(default_factory=dict)
 
-    # --- 조각 꺼내기 ---------------------------------------------------
+    # --- slicing ---------------------------------------------------------
     def feats(self, split: str) -> np.ndarray:
         return self.world.feats[self.idx[split]]
 
@@ -51,7 +51,7 @@ class Lab:
             self._teachers[key] = labeler.LabelerLLM(self.world, cfg)
         return self._teachers[key]
 
-    # --- LLM 호출 -------------------------------------------------------
+    # --- LLM calls -------------------------------------------------------
     def vote(self, split: str, k: int, cfg: labeler.LabelerConfig = labeler.MAIN,
              seed: int = 0) -> np.ndarray:
         return self.get_teacher(cfg).vote(self.idx[split], k=k, seed=7000 + 13 * seed + k)
@@ -68,14 +68,14 @@ def build(world_cfg: WorldConfig | None = None, seed: int = 13) -> Lab:
     C = w.n_classes
     return Lab(
         world=w, idx=idx,
-        axis_fix=signals.make_axis("사용자 선택 카테고리", w.primary, C,
+        axis_fix=signals.make_axis("user-selected category", w.primary, C,
                                    n_groups=5, noise=0.30, seed=101),
-        axis_eval=signals.make_axis("처리 조직 배정", w.primary, C,
+        axis_eval=signals.make_axis("routing-target assignment", w.primary, C,
                                     n_groups=7, noise=0.25, seed=202),
     )
 
 
-# --- 작은 모델 -----------------------------------------------------------------
+# --- small model -----------------------------------------------------------------
 
 def train_small_model(lab: Lab, targets: np.ndarray, train_split: str = "train",
                   eval_split: str = "test", weight: np.ndarray | None = None,
@@ -84,10 +84,10 @@ def train_small_model(lab: Lab, targets: np.ndarray, train_split: str = "train",
                                      lab.feats(eval_split), sample_weight=weight, **kw)
 
 
-# --- 채점 -----------------------------------------------------------------
+# --- scoring -----------------------------------------------------------------
 
 def key_quality(lab: Lab, key: labeler.PseudoLabels, split: str) -> dict[str, float]:
-    """pseudo-label 자체를 오라클로 채점한다 (작은 모델과 무관하게 라벨 품질만)."""
+    """Score the pseudo-labels themselves against the oracle (label quality only, independent of the small model)."""
     truth = lab.truth(split)
     s = metrics.summary(key.mat, truth)
     return {
@@ -100,7 +100,7 @@ def key_quality(lab: Lab, key: labeler.PseudoLabels, split: str) -> dict[str, fl
 
 def score_all(lab: Lab, proba: np.ndarray, split: str, circular: labeler.PseudoLabels,
               ratio_threshold: float = 0.5) -> dict[str, float]:
-    """같은 예측을 세 채점표로 채점한다."""
+    """Score the same predictions with all three scorecards."""
     pred = small_model.decode(proba, ratio_threshold)
     truth = lab.truth(split)
     ax = lab.axis("eval", split)

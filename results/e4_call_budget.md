@@ -1,27 +1,27 @@
-## e4 · 같은 LLM 호출 예산, 다른 배분
+## e4 · Same LLM call budget, different allocations
 
-가설 — 호출 90,000회를 '얕게 많이' 쓸 것인가 '갈린 행에 깊게' 쓸 것인가
+Hypothesis — Should 90,000 calls be spent 'shallow and wide' or 'deep on split rows'?
 
-학습 풀 30,000행, 예산 90,000 호출. 왼쪽 네 칸은 pseudo-label 자체의 품질, 오른쪽 두 칸은 그 pseudo-label 로 학습한 작은 모델의 정답 기준 점수다.
+Training pool 30,000 rows, budget 90,000 calls. The four left columns are the quality of the pseudo-labels themselves; the two right columns are the true-label scores of the small model trained on those pseudo-labels.
 
-| 배분 | 쓴 호출 | 라벨한 행 | pseudo-label top1 | pseudo-label EM | 멀티율 | 작은 모델 정답 top1 | 작은 모델 정답 EM |
+| Allocation | Calls spent | Rows labeled | Pseudo-label top1 | Pseudo-label EM | Multi rate | Small model true top1 | Small model true EM |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| 3회 × 30,000행 | 90000 | 30000 | 0.7711 | 0.7148 | 0.0000 | 0.7650 | 0.6490 |
-| 5회 × 18,000행 | 90000 | 18000 | 0.7874 | 0.6737 | 0.2059 | 0.7816 | 0.6611 |
-| 7회 × 12,857행 | 89999 | 12857 | 0.8026 | 0.7175 | 0.1085 | 0.7805 | 0.6668 |
-| 3회+애매행 4회 × 18,886행 | 89994 | 18886 | 0.8013 | 0.7177 | 0.1004 | 0.7831 | 0.6668 |
+| 3 calls × 30,000 rows | 90000 | 30000 | 0.7711 | 0.7148 | 0.0000 | 0.7650 | 0.6490 |
+| 5 calls × 18,000 rows | 90000 | 18000 | 0.7874 | 0.6737 | 0.2059 | 0.7816 | 0.6611 |
+| 7 calls × 12,857 rows | 89999 | 12857 | 0.8026 | 0.7175 | 0.1085 | 0.7805 | 0.6668 |
+| 3 calls + 4 on split rows × 18,886 rows | 89994 | 18886 | 0.8013 | 0.7177 | 0.1004 | 0.7831 | 0.6668 |
 
-이긴 배분은 3회+애매행 4회 × 18,886행. 전량 3표 대비 정답 top1 +1.81pp / EM +1.78pp. 라벨한 행 수는 오히려 적다 — 행을 더 사는 것보다 이미 산 행의 라벨을 고치는 쪽이 쌌다는 뜻이다.
+The winning allocation is 3 calls + 4 on split rows × 18,886 rows. Versus 3 votes on every row: true top1 +1.81pp / EM +1.78pp. It actually labels fewer rows — meaning that fixing the labels of rows already paid for was cheaper than buying more rows.
 
-행 수를 고정하고 호출 수만 늘리면 (예산 무시):
+Fixing the number of rows and increasing only the number of calls (ignoring the budget):
 
-| 호출 수 | pseudo-label top1 | pseudo-label EM | pseudo-label 멀티율 | 만장일치 비율 |
+| Calls | Pseudo-label top1 | Pseudo-label EM | Pseudo-label multi rate | Unanimous share |
 |---|---:|---:|---:|---:|
 | 1 | 0.7284 | 0.6725 | 0.0000 | 1.0000 |
 | 3 | 0.7711 | 0.7148 | 0.0000 | 0.5570 |
 | 5 | 0.7871 | 0.6714 | 0.2065 | 0.4377 |
 | 7 | 0.8025 | 0.7151 | 0.1109 | 0.3787 |
 
-라벨 선택(top1)은 표를 늘릴수록 단조로 좋아지지만, 완전일치는 출렁인다 — 멀티율이 정답(0.113)을 넘었다가 돌아오기 때문이다. 즉 '몇 표를 쓸까'는 라벨 선택 문제와 개수 문제 두 개를 동시에 건드린다. 완전일치 하나만 보고 호출 수를 정하면 두 효과가 상쇄되어 아무것도 안 보인다(→ e5).
+Label selection (top1) improves monotonically with more votes, but exact match fluctuates — because the multi rate overshoots the true rate (0.113) and then comes back. In other words, 'how many votes to use' touches two problems at once: label selection and label count. Choosing the number of calls by exact match alone makes the two effects cancel out, so nothing is visible (→ e5).
 
-판정 — ✅ 지지. H4 지지. 같은 예산에서 표적 재투표가 이겼다(3회+애매행 4회 × 18,886행). 다만 이득은 '표를 많이 써서'가 아니라 '만장일치 행에 표를 안 써서' 생긴다. 게이트(e1)가 없으면 이 배분 자체가 불가능하다.
+Verdict — ✅ Supported. H4 supported. Under the same budget, targeted re-voting won (3 calls + 4 on split rows × 18,886 rows). But the gain comes not from 'spending many votes' but from 'not spending votes on unanimous rows'. Without the gate (e1), this allocation is not possible at all.

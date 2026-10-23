@@ -1,25 +1,25 @@
-## e3 · 투표 분포를 소프트 타깃으로 (KD)
+## e3 · Vote distribution as soft targets (KD)
 
-가설 — 라벨링 LLM의 최종 라벨 대신 투표 분포를 학습시키면 작은 모델이 나아지는가
+Hypothesis — Does training on the vote distribution instead of the labeling LLM's final label improve the small model?
 
-라벨링 LLM 5회 호출로 만든 pseudo-label 하나를 세 가지 타깃 형태로만 바꿔 학습한다. 데이터·구조·스텝 수 전부 동일.
+A single set of pseudo-labels from 5 labeling-LLM calls is trained in three target forms only. Data, architecture, and number of steps are all identical.
 
-| 학습 타깃 | 정답 top1 | 진짜 EM | 정답 멀티행 EM | 순환 top1 |
+| Training target | True top1 | True EM | True multi-row EM | Circular top1 |
 |---|---:|---:|---:|---:|
-| A 하드 (primary one-hot) | 0.7704 | 0.6555 | 0.0645 | 0.8287 |
-| B 집합 (primary .75 / secondary .25) | 0.7796 | 0.6597 | 0.0894 | 0.8303 |
-| C 소프트 (투표 분포 그대로) | 0.7899 | 0.6468 | 0.1753 | 0.8310 |
+| A hard (primary one-hot) | 0.7704 | 0.6555 | 0.0645 | 0.8287 |
+| B set (primary .75 / secondary .25) | 0.7796 | 0.6597 | 0.0894 | 0.8303 |
+| C soft (raw vote distribution) | 0.7899 | 0.6468 | 0.1753 | 0.8310 |
 
-먼저 눈에 띄는 건 소프트 타깃이 전체 EM 을 떨어뜨린다는 것이다 (B 0.6597 → C 0.6468). 같은 표에서 top1 과 멀티행 EM 은 올라갔는데도 그렇다. 소프트 타깃이 2등 라벨에 질량을 남겨 top-2 를 더 자주 열게 만들고, 전체 EM 은 멀티 예측이 늘면 손해를 보기 때문이다(→ e5 의 파레토 전선). '좋아졌다/나빠졌다'가 지표에 따라 갈리는 첫 지점.
+The first thing that stands out is that soft targets lower overall EM (B 0.6597 → C 0.6468), even though top1 and multi-row EM went up in the same table. Soft targets leave mass on the runner-up label, so top-2 is opened more often, and overall EM loses when multi-label predictions increase (→ the Pareto front in e5). This is the first place where 'better/worse' depends on the metric.
 
-B(집합) → C(소프트) 로 바꿨을 때 정답 top1 이 어디서 움직였는가. 층화는 테스트 쪽 라벨링 LLM 투표로만 한다 — 오라클 없이도 할 수 있는 층화여야 실무에 그대로 옮겨진다.
+Where did true top1 move when switching from B (set) to C (soft)? Stratification uses only the labeling LLM's votes on the test side — stratification must be possible without the oracle to transfer directly to production.
 
-| 층 | n | B 집합 | C 소프트 | Δ(pp) | McNemar p |
+| Stratum | n | B set | C soft | Δ(pp) | McNemar p |
 |---|---:|---:|---:|---:|---:|
-| 만장일치층 (agree) | 8771 | 0.9566 | 0.9593 | 0.2736 | 0.0009 |
-| 표 갈린 층 (partial+review) | 11209 | 0.6412 | 0.6574 | 1.6237 | 0.0000 |
-| 전체 | 19980 | 0.7796 | 0.7899 | 1.0310 | 0.0000 |
+| Unanimous stratum (agree) | 8771 | 0.9566 | 0.9593 | 0.2736 | 0.0009 |
+| Split-vote stratum (partial+review) | 11209 | 0.6412 | 0.6574 | 1.6237 | 0.0000 |
+| All | 19980 | 0.7796 | 0.7899 | 1.0310 | 0.0000 |
 
-전체 이득 +1.03pp, 표 갈린 층 +1.62pp. 방향은 예측대로다 — 라벨링 LLM이 흔들린 곳에서만 번다. 다만 전체 이득의 절대 크기는 작아서, 이것만으로 재학습 비용을 정당화하기는 어렵다. 소프트 타깃의 진짜 값어치는 점수가 아니라 투표 분포를 보존해 두면 GPU 재실행 없이 이런 사후 실험이 가능해진다는 데 있다.
+Overall gain +1.03pp, split-vote stratum +1.62pp. The direction is as predicted — the gain comes only where the labeling LLM wavered. But the absolute size of the overall gain is small, so it hardly justifies the cost of retraining on its own. The real value of soft targets lies not in the score but in the fact that preserving the vote distribution makes post-hoc experiments like this possible without re-querying the LLM.
 
-판정 — △ 부분지지. H3 부분지지. 이득의 방향과 위치는 가설대로지만(갈린 층 +1.62pp) 전체 +1.03pp 는 크지 않다. 채택하되 '이걸로 성능을 만든다'고 말하지 않는다.
+Verdict — △ Partially supported. H3 partially supported. The direction and location of the gain match the hypothesis (split stratum +1.62pp), but the overall +1.03pp is not large. Adopt it, but do not claim 'this is what delivers the performance'.

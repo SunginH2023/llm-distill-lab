@@ -1,14 +1,20 @@
-"""합성 세계 + pseudo-label 파이프라인 → SFT 학습 데이터(JSONL).
+"""Synthetic world + pseudo-label pipeline -> SFT training data (JSONL).
 
-앞의 실험들이 벡터 위에서 내린 결론을 그대로 텍스트/LLM 쪽으로 옮긴다.
+Carries the conclusions the earlier experiments reached on vectors over to the
+text / LLM side:
 
-    e1  → 표가 갈린 행은 `grade` 로 표시해 둔다 (검수 큐 / 재호출 대상)
-    e3  → 투표 분포를 `vote_dist` 로 같이 저장한다 (소프트 타깃 실험용)
-    e4  → 애매한 행에만 호출을 더 쓴 pseudo-label 을 기본값으로 쓴다
-    e2  → 평가셋에는 외부 신호(outside_signal)와 진짜 정답을 같이 넣어 둔다
+    e1  -> rows with split votes are marked via `grade` (review queue / re-query targets)
+    e3  -> the vote distribution is stored as `vote_dist` (for soft-target experiments)
+    e4  -> the default pseudo-label spends extra calls only on ambiguous rows
+    e2  -> evaluation rows also carry an outside signal (`outside_signal`) and the true label
 
-`truth` 필드는 평가 전용. 학습 스크립트는 이 필드를 읽지 않는다
-(합성 실험에서 오라클이 학습 경로로 새면 전부 무의미해지므로).
+The `truth` field is for evaluation only; the training script never reads it
+(in a synthetic experiment, letting the oracle leak into training would make
+every result meaningless).
+
+The rendered texts and the strings written to meta.json / summary.json are
+intentionally Korean (see render_text.py). They are dataset content and are
+kept byte-identical; only comments and console messages are in English.
 
     python finetune/build_sft_data.py --out finetune/data --n-train 4000
 """
@@ -18,7 +24,7 @@ from __future__ import annotations
 import pathlib as _p
 import sys as _s
 _s.path.insert(0, str(_p.Path(__file__).resolve().parent.parent))
-import lab as _lab  # noqa: F401  (numpy 임포트 전에 BLAS 스레드 고정)
+import lab as _lab  # noqa: F401  (pins BLAS threads before numpy is imported)
 
 import argparse
 import json
@@ -30,7 +36,7 @@ from lab import labeler, pipeline
 
 
 def targeted_pseudo_labels(lab, split: str, base_k: int = 3, extra_k: int = 4):
-    """e4 의 결론을 그대로: 전량 base_k 회 호출 + 표가 갈린 행에만 extra_k 회 더."""
+    """Apply the e4 conclusion: base_k calls for every row, plus extra_k more only for split-vote rows."""
     base = lab.vote(split, base_k, seed=11)
     amb = labeler.labels_from_votes(base).grade != labeler.AGREE
     extra = lab.vote(split, extra_k, seed=12)
@@ -61,9 +67,11 @@ def main() -> None:
 
     ax_eval = lab.axis_eval
     meta = {"classes": rt.CLASS_NAMES, "prompt_template": rt.PROMPT,
-            # 외부 신호(평가 전용) 크로스워크: 카테고리 → 굵은 그룹
+            # Outside-signal crosswalk (evaluation only): category -> coarse group
             "outside_signal_group_of": [int(g) for g in ax_eval.group_of],
             "outside_signal_noise": ax_eval.noise,
+            # Korean note kept verbatim (dataset content). Gloss: "All categories
+            # and phrases are fictional, produced by the synthetic generator."
             "note": "카테고리·문구는 전부 합성 생성기가 만든 가상의 것."}
     (out / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2),
                                    encoding="utf-8")
@@ -72,6 +80,9 @@ def main() -> None:
     for split, cap in caps.items():
         idx = lab.idx[split][:cap]
         post = lab.world.post[idx]
+        # NOTE: hash() of a str is salted per process unless PYTHONHASHSEED is set,
+        # so the rendered texts (not the labels) vary between runs by default.
+        # Run with a fixed PYTHONHASHSEED for byte-reproducible output.
         texts = rt.render(post, seed=args.seed + hash(split) % 1000)
 
         labels, amb = targeted_pseudo_labels(lab, split)
@@ -83,23 +94,26 @@ def main() -> None:
         rows = []
         for j, i in enumerate(sel):
             pseudo = np.where(labels.mat[i])[0].tolist()
-            # 1등이 항상 앞에 오게 (집합은 순서를 담지 않는다 → 명시적으로 정렬)
+            # Put the top-voted label first (a set carries no order, so sort explicitly).
             pseudo.sort(key=lambda c: (c != labels.primary[i], c))
             rows.append({
                 "id": int(idx[j]),
                 "text": texts[j],
-                # 프롬프트는 저장하지 않는다 — text 로부터 항상 재생성된다.
-                # (행마다 카테고리 목록을 통째로 복사하면 파일이 6배로 불어난다.)
+                # The prompt is not stored; it is always rebuilt from `text`.
+                # (Copying the full category list into every row would inflate the file about 3x.)
                 "completion": rt.build_completion(pseudo),
                 "pseudo_labels": [rt.code(c) for c in pseudo],
                 "grade": labeler.GRADE_NAMES[int(labels.grade[i])],
                 "n_calls": int(labels.k[i]),
                 "vote_dist": [round(float(v), 4) for v in labels.frac[i]],
-                # --- 아래 둘은 평가 전용. 학습 스크립트는 읽지 않는다 ---
+                # --- The two fields below are evaluation only; the training script never reads them ---
                 "truth": [rt.code(c) for c in np.where(truth[j])[0].tolist()],
                 "outside_signal": int(axis.observed[sel[j]]),
             })
         dump(out / f"{split}.jsonl", rows)
+        # summary.json keys are kept in Korean so the committed file stays byte-identical.
+        # Glosses: multi-label rate / split-vote rate / mean number of calls /
+        # pseudo-label accuracy against the true label.
         summary[split] = {
             "n": len(rows),
             "멀티라벨 비율": round(float(np.mean([len(r["pseudo_labels"]) >= 2 for r in rows])), 4),
@@ -113,11 +127,11 @@ def main() -> None:
                                       encoding="utf-8")
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     print(f"\n→ {out}/{{train,val,test}}.jsonl")
-    print("예시 --------------------------------------------------")
+    print("Example -----------------------------------------------")
     first = json.loads((out / "train.jsonl").read_text(encoding="utf-8").split("\n")[0])
     print(first["text"])
     print(" pseudo:", first["pseudo_labels"], "| grade:", first["grade"],
-          "| 진짜:", first["truth"])
+          "| truth:", first["truth"])
 
 
 if __name__ == "__main__":

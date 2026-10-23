@@ -1,18 +1,18 @@
 .PHONY: all test data smoke clean e1 e2 e3 e4 e5
 
-all:            ## 전 실험 실행 → results/RESULTS.md (~65초, numpy 만 필요)
+all:            ## run all experiments -> results/RESULTS.md (numpy only; about 17 s on an Apple M1 laptop)
 	python experiments/run_all.py
 
-test:           ## 설계 무결성 테스트 (pytest 없이도 동작)
+test:           ## design-integrity tests (works without pytest)
 	python tests/run_tests.py
 
-e1 e2 e3 e4 e5: ## 실험 하나만
+e1 e2 e3 e4 e5: ## run a single experiment
 	@python $(wildcard experiments/$@_*.py)
 
-data:           ## 합성 세계 → 한국어 텍스트 SFT 데이터 (finetune/data/*.jsonl)
-	python finetune/build_sft_data.py
+data:           ## synthetic world -> Korean-text SFT data (finetune/data/*.jsonl)
+	PYTHONHASHSEED=0 python finetune/build_sft_data.py
 
-smoke:          ## LoRA 학습·생성·채점 전 경로 검증 (CPU, 다운로드 없음, ~90초)
+smoke:          ## end-to-end check of LoRA training, generation and scoring (CPU, no downloads; train + eval about 26 s on an Apple M1 laptop)
 	python finetune/train_qlora.py --smoke --epochs 8 --bs 8 --grad-accum 1 --lr 8e-3 --limit 256
 	python finetune/evaluate.py --smoke --limit 64
 

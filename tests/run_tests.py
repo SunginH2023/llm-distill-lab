@@ -1,4 +1,4 @@
-"""의존성 없는 테스트 러너. `pytest tests/` 로도 그대로 돌아간다.
+"""Dependency-free test runner. Also works unchanged with `pytest tests/`.
 
     python tests/run_tests.py
 """
@@ -11,7 +11,7 @@ import sys as _s
 _HERE = _p.Path(__file__).resolve().parent
 _s.path.insert(0, str(_HERE.parent))
 _s.path.insert(0, str(_HERE))
-import lab as _lab  # noqa: F401,E402  (numpy 임포트 전에 BLAS 스레드 고정)
+import lab as _lab  # noqa: F401,E402  (pin BLAS threads before importing numpy)
 
 import time  # noqa: E402
 import traceback  # noqa: E402

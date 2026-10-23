@@ -1,39 +1,50 @@
-"""합성 세계를 한국어 텍스트로 그려낸다.
+"""Render the synthetic world as Korean text.
 
-앞의 e1~e5 는 벡터 위에서 돌았다. 실제로 LLM이 읽는 것은 텍스트이므로,
-같은 세계를 텍스트로 옮겨야 LoRA 학습까지 이어진다.
+Experiments e1-e5 operate on vector representations. An LLM, however, reads
+text, so the same world has to be rendered as text before it can feed a LoRA
+fine-tuning run.
 
-핵심 설계 하나: 문구를 진짜 라벨이 아니라 사후확률에 비례해 뽑는다.
-그래서 애매한 건은 텍스트 자체가 애매해진다. 두 카테고리의 문구가 섞여 들어간다.
-"애매함"을 라벨에만 넣고 텍스트는 깨끗하게 두면, 모델 입장에서는 그냥 라벨 노이즈일 뿐
-현실의 경계 사례를 재현하지 못한다.
+Key design choice: phrases are sampled in proportion to the posterior, not from
+the true label. Ambiguous items therefore produce ambiguous text, mixing phrases
+from two categories. If ambiguity lived only in the labels while the text stayed
+clean, the model would see plain label noise rather than realistic boundary cases.
 
-주의: 여기 카테고리와 문구는 전부 지어낸 것. 특정 서비스·조직·실제 데이터와 무관하고,
-합성 생성기가 만든 문자열이다.
+Language note: the dataset is intentionally Korean. Every string constant below
+(CLASS_NAMES, PHRASES, OPENERS, CLOSERS, PROMPT) is training/evaluation data:
+it is rendered into finetune/data/*.jsonl, stored in meta.json, and fed to the
+model as the prompt. Translating any of them would change the dataset, so they
+are kept verbatim; English glosses are given in the comments.
+
+Disclaimer: all categories and phrases are fictional strings produced for this
+synthetic generator. They are unrelated to any real service, organization, or
+dataset.
 """
 
 from __future__ import annotations
 
 import numpy as np
 
-# world.py 의 구조와 1:1로 맞춘 가상의 카테고리 12개.
-#   index 0        = '기타' 자석 클래스 (애매한 건이 흘러드는 곳)
-#   (3,4) (5,6) (7,8) = 정의가 겹쳐 헷갈리는 쌍
-#   (2,9) (10,11)     = 실제로 동시에 성립할 수 있는 쌍
+# Twelve fictional categories, mapped 1:1 onto the structure of world.py.
+#   index 0           = "other" magnet class (where ambiguous items drift)
+#   (3,4) (5,6) (7,8) = confusable pairs with overlapping definitions
+#   (2,9) (10,11)     = pairs that can genuinely hold at the same time
+# The Korean names are data (they appear in the prompt and in meta.json).
 CLASS_NAMES = [
-    "기타/분류불가",      # 0  자석
-    "배송지연",           # 1
-    "상품문의",           # 2  ─┐ 공존 가능
-    "결제오류",           # 3  ─┐ 헷갈리는 쌍
-    "환불요청",           # 4  ─┘
-    "계정로그인",         # 5  ─┐ 헷갈리는 쌍
-    "비밀번호재설정",     # 6  ─┘
-    "앱오류",             # 7  ─┐ 헷갈리는 쌍
-    "알림설정",           # 8  ─┘
-    "재고품절",           # 9  ─┘ 공존 가능
-    "쿠폰혜택",           # 10 ─┐ 공존 가능
-    "멤버십등급",         # 11 ─┘
+    "기타/분류불가",      # 0  other / unclassifiable (magnet)
+    "배송지연",           # 1  shipping delay
+    "상품문의",           # 2  product question      ─┐ can co-occur with 9
+    "결제오류",           # 3  payment error         ─┐ confusable pair
+    "환불요청",           # 4  refund request        ─┘
+    "계정로그인",         # 5  account login         ─┐ confusable pair
+    "비밀번호재설정",     # 6  password reset        ─┘
+    "앱오류",             # 7  app error             ─┐ confusable pair
+    "알림설정",           # 8  notification settings ─┘
+    "재고품절",           # 9  out of stock          ─┘ can co-occur with 2
+    "쿠폰혜택",           # 10 coupon / promotion    ─┐ can co-occur
+    "멤버십등급",         # 11 membership tier       ─┘
 ]
+
+# Four Korean phrases per category (row c belongs to CLASS_NAMES[c]); data, kept verbatim.
 
 PHRASES: list[list[str]] = [
     ["뭐라고 해야 할지 모르겠는데 좀 이상합니다", "그냥 전반적으로 불편해요",
@@ -62,14 +73,16 @@ PHRASES: list[list[str]] = [
      "등급 혜택이 안 보입니다", "실적이 반영되지 않은 것 같아요"],
 ]
 
+# Optional greeting / sign-off around the body ("" means none); data, kept verbatim.
 OPENERS = ["안녕하세요.", "문의드립니다.", "확인 부탁드려요.", ""]
 CLOSERS = ["확인 후 답변 부탁드립니다.", "빠른 처리 부탁드려요.", "감사합니다.", ""]
 
 
 def render(post: np.ndarray, seed: int = 0, n_phrases: int = 3) -> list[str]:
-    """(n, C) 사후확률 → 문장 n개.
+    """Map an (n, C) posterior matrix to n Korean texts.
 
-    문구를 사후확률에서 뽑기 때문에, 경계에 있는 건은 두 카테고리 문구가 섞인다.
+    Phrases are sampled from the posterior, so items near a decision boundary
+    mix phrases from two categories.
     """
     rng = np.random.default_rng(seed)
     n, C = post.shape
@@ -77,7 +90,7 @@ def render(post: np.ndarray, seed: int = 0, n_phrases: int = 3) -> list[str]:
     for i in range(n):
         picks = rng.choice(C, size=n_phrases, p=post[i], replace=True)
         parts = [PHRASES[c][rng.integers(len(PHRASES[c]))] for c in picks]
-        # 같은 문구 중복 제거 (순서 유지)
+        # Drop duplicate phrases while preserving order.
         seen, uniq = set(), []
         for p in parts:
             if p not in seen:
@@ -91,11 +104,11 @@ def render(post: np.ndarray, seed: int = 0, n_phrases: int = 3) -> list[str]:
 
 
 def code(i: int) -> str:
-    """카테고리 코드는 두 자리로 고정한다.
+    """Format a category code with a fixed width of two digits.
 
-    많은 LLM이 숫자를 한 자리씩 토큰화하기 때문에, 자릿수가 섞이면
-    ('3' vs '11') 생성 길이가 들쭉날쭉해지고 파싱 실패가 늘어난다.
-    두 자리로 고정하면 코드 하나가 항상 같은 토큰 수를 차지한다.
+    Many LLM tokenizers split numbers digit by digit. Mixing widths ('3' vs
+    '11') makes the generation length vary and increases parse failures.
+    With a fixed width every code occupies the same number of tokens.
     """
     return f"{i:02d}"
 
@@ -104,6 +117,11 @@ def category_list() -> str:
     return ", ".join(f"{code(i)} {name}" for i, name in enumerate(CLASS_NAMES))
 
 
+# Classification prompt (data, kept verbatim in Korean). Gloss: "Classify the
+# following customer inquiry into one of the categories below. Rules: pick the
+# single best category; pick up to two only when both genuinely apply; do not
+# pick two merely because the case is ambiguous; answer with a single line of
+# JSON. Inquiry: {text}  Answer:"
 PROMPT = """다음 고객 문의를 아래 카테고리로 분류하세요.
 
 카테고리: {categories}

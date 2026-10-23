@@ -1,13 +1,14 @@
-"""학습한 어댑터로 생성 → JSON 파싱 → 세 채점표로 채점.
+"""Generate with the trained adapter -> parse JSON -> score against three references.
 
-e2 에서 얻은 결론을 실제 LLM 쪽에도 그대로 적용한다. 하나의 예측을 세 번 채점한다.
+Applies the e2 conclusion to the real LLM path: each prediction is scored three times.
 
-    ① pseudo-label 평가셋   — 실무에서 유일하게 손에 쥘 수 있는 것
-    ② 외부 신호            — 만들려면 만들 수 있는 것 (여기선 카테고리→굵은 그룹 + 잡음)
-    ③ 진짜 정답            — 합성이라 존재. 이 셋이 서로 다른 말을 하는지 확인용
+    (1) pseudo-label eval set -- the only reference available in practice
+    (2) outside signal        -- one that can be built if needed (here: category -> coarse group + noise)
+    (3) true label            -- exists only because the data are synthetic; used to check
+                                 whether the three references disagree
 
-형식 준수율(JSON 파싱 성공률)도 같이 찍는다. 생성 계열에서는 이게 0.99 아래로
-떨어지는 순간 정확도 논의가 무의미해진다.
+The format compliance rate (JSON parse success) is reported too. For generative
+models, accuracy figures become meaningless once this drops below 0.99.
 
     python finetune/evaluate.py --adapter finetune/runs/lora --smoke --limit 200
 """
@@ -32,7 +33,7 @@ JSON_RE = re.compile(r"\{.*?\}", re.S)
 
 
 def parse_labels(text: str, n_classes: int) -> list[int] | None:
-    """생성 결과에서 라벨 코드를 뽑는다. 실패하면 None (형식 위반으로 집계)."""
+    """Extract label codes from a generation. Returns None on failure (counted as a format violation)."""
     m = JSON_RE.search(text)
     if not m:
         return None
@@ -68,7 +69,7 @@ def generate(model, tok, prompts, device, max_new=24, batch=8):
         n = max(len(e) for e in enc)
         ids = torch.full((len(enc), n), tok.pad_id, dtype=torch.long)
         att = torch.zeros((len(enc), n), dtype=torch.long)
-        for j, e in enumerate(enc):        # 좌측 패딩 — 생성은 오른쪽 끝에서 이어진다
+        for j, e in enumerate(enc):        # left padding: generation continues from the right end
             ids[j, n - len(e):] = torch.tensor(e)
             att[j, n - len(e):] = 1
         ids, att = ids.to(device), att.to(device)
@@ -103,7 +104,7 @@ def main() -> None:
         tok = CharTokenizer(itos=vocab, stoi={c: i for i, c in enumerate(vocab)},
                             pad_id=0, eos_id=1)
         base = build_tiny_causal_lm(len(tok))
-        # 학습 때 쓴 그 base 를 그대로 되살린다 (무작위 초기화라 시드만으로는 못 맞춘다)
+        # Restore the exact base used in training (random init cannot be matched by seed alone).
         base.load_state_dict(torch.load(_p.Path(args.adapter) / "tiny_base.pt",
                                         map_location="cpu", weights_only=True))
     else:
@@ -127,28 +128,29 @@ def main() -> None:
     observed = np.array([r["outside_signal"] for r in rows])
 
     top1 = np.where(pred.any(axis=1), np.argmax(pred, axis=1), -1)
-    # 외부 신호는 1등 라벨만 채점한다 (집합 전체를 채점하면 많이 뱉는 쪽이 유리해진다)
+    # Score the outside signal on the top-1 label only (scoring the whole set would favor over-prediction).
     valid = top1 >= 0
     outside = np.zeros(len(rows), dtype=bool)
     outside[valid] = group_of[top1[valid]] == observed[valid]
-    # 이 축이 상위 후보를 구분해 주지 못하는 행은 제외
+    # Placeholder for excluding rows where this axis cannot separate the top candidates
+    # (currently all rows are kept).
     discriminative = np.ones(len(rows), dtype=bool)
 
     result = {
         "n": len(rows),
-        "형식 준수율(JSON 파싱)": float(ok_format.mean()),
-        "① pseudo-label 평가셋 EM": float(exact_match(pred, pseudo).mean()),
-        "② 외부 신호 일관성(top1)": float(outside[discriminative].mean()),
-        "③ 진짜 정답 EM": float(exact_match(pred, truth).mean()),
-        "③ 진짜 정답 top1": float(np.mean([
+        "format_ok (JSON parse rate)": float(ok_format.mean()),
+        "(1) pseudo-label eval set EM": float(exact_match(pred, pseudo).mean()),
+        "(2) outside-signal agreement (top1)": float(outside[discriminative].mean()),
+        "(3) true-label EM": float(exact_match(pred, truth).mean()),
+        "(3) true-label top1": float(np.mean([
             t >= 0 and truth[i, t] for i, t in enumerate(top1)])),
-        "예측 멀티율": float((pred.sum(axis=1) >= 2).mean()),
-        "pseudo-label 자체의 진짜 정답 EM": float(exact_match(pseudo, truth).mean()),
+        "predicted multi-label rate": float((pred.sum(axis=1) >= 2).mean()),
+        "pseudo-label EM vs true label": float(exact_match(pseudo, truth).mean()),
     }
     print(json.dumps(result, ensure_ascii=False, indent=2))
     if not ok_format.all():
         bad = [g for g, p in zip(gen, parsed) if p is None][:3]
-        print("\n형식 위반 예시:", json.dumps(bad, ensure_ascii=False)[:400])
+        print("\nformat violation examples:", json.dumps(bad, ensure_ascii=False)[:400])
 
     out = _p.Path(args.out or (_p.Path(args.adapter) / "eval.json"))
     out.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")

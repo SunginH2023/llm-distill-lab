@@ -1,50 +1,50 @@
-## e1 · 합의 게이트와 검수 예산
+## e1 · Consensus gate and review budget
 
-가설 — 표가 갈린 정도만으로 라벨 품질을 사전 분류할 수 있는가
+Hypothesis — Can the degree of vote disagreement alone pre-sort label quality?
 
-라벨링 LLM 5회 호출. 등급은 득표 분포만 보고 매긴다 — 오라클은 채점에만 쓴다.
+Labeling LLM called 5 times. Grades are assigned from the vote distribution alone — the oracle is used only for scoring.
 
-| 등급 | 행 수 | 비율 | primary 정답률 | 평균 모호도 |
+| Grade | Rows | Share | Primary accuracy | Mean ambiguity |
 |---|---:|---:|---:|---:|
 | agree | 8771 | 0.439 | 0.9723 | 0.1316 |
 | partial | 9555 | 0.478 | 0.7168 | 0.3750 |
 | review | 1654 | 0.083 | 0.2703 | 0.4766 |
 
-만장일치 구간 0.972 vs 표가 깨진 구간 0.270 — 70.2pp 차이. 득표수를 확률로 환산하지 않고 경로를 가르는 게이트로만 써도 이만큼 갈린다.
+Unanimous band 0.972 vs split-vote band 0.270 — a 70.2pp gap. Even without converting vote counts into probabilities, using them only as a routing gate separates quality this much.
 
-검수 예산을 게이트 순서로 쓸 때와 무작위로 쓸 때 (검수한 행은 정답으로 교체된다고 가정):
+Spending the review budget in gate order vs at random (assuming reviewed rows are replaced with the true label):
 
-| 검수 비율 | 검수 전 | 게이트 우선 | 무작위 | Δ |
+| Review share | Before review | Gate first | Random | Δ |
 |---|---:|---:|---:|---:|
 | 5% | 0.7920 | 0.8282 | 0.8025 | 0.0257 |
 | 10% | 0.7920 | 0.8592 | 0.8132 | 0.0460 |
 | 20% | 0.7920 | 0.8994 | 0.8346 | 0.0648 |
 | 40% | 0.7920 | 0.9595 | 0.8772 | 0.0823 |
 
-H1b — 싼 모델을 하나 더 불러 '둘이 일치한 것만' 채택해 본다. 같은 커버리지에서 같은 모델 반복 호출 게이트와 비교해야 공정하다.
+H1b — call one more cheap model and keep only rows where 'the two agree'. A fair comparison is against the same-model repeated-call gate at the same coverage.
 
-| 필터 | 남는 행 | 커버리지 | primary 정답률 |
+| Filter | Rows kept | Coverage | Primary accuracy |
 |---|---:|---:|---:|
-| 메인 LLM 단독 | 19980 | 1.0000 | 0.7920 |
-| 싼 LLM 단독 | 19980 | 1.0000 | 0.4445 |
-| 두 모델 일치분만 채택 | 10720 | 0.5365 | 0.7840 |
-| 메인 LLM 만장일치분만 | 8771 | 0.4390 | 0.9723 |
+| Main LLM alone | 19980 | 1.0000 | 0.7920 |
+| Cheap LLM alone | 19980 | 1.0000 | 0.4445 |
+| Keep only rows where both models agree | 10720 | 0.5365 | 0.7840 |
+| Main LLM unanimous rows only | 8771 | 0.4390 | 0.9723 |
 
-두 모델이 일치했는데 둘 다 틀린 행이 11.6%. 싼 LLM은 메인 LLM의 오류를 독립적으로 잡아주지 못하고, 메인 LLM이 맞힌 답을 기각하는 데는 성공한다 — 일치 필터가 버린 행 중 메인 LLM가 맞혔던 비율 0.801.
+Rows where the two models agree but both are wrong: 11.6%. The cheap LLM does not independently catch the main LLM's errors, but it does succeed at rejecting answers the main LLM got right — among rows dropped by the agreement filter, the share the main LLM had right is 0.801.
 
-H1c — 이번엔 LLM-as-a-judge. 싼 LLM에게 라벨을 새로 고르게 하지 않고 '이 라벨 맞습니까?'만 물어 통과분만 남긴다. 게이트와 공정하게 비교하려면 커버리지를 맞춰서 봐야 한다.
+H1c — now LLM-as-a-judge. Instead of having the cheap LLM choose a new label, we only ask 'is this label correct?' and keep the accepted rows. A fair comparison with the gate requires matching coverage.
 
-| 필터 | 남는 행 | 커버리지 | primary 정답률 |
+| Filter | Rows kept | Coverage | Primary accuracy |
 |---|---:|---:|---:|
-| judge 통과분만 (strictness=0) | 11691 | 0.5851 | 0.7936 |
-| judge 통과분만 (strictness=1) | 7747 | 0.3877 | 0.8003 |
-| judge 통과분만 (strictness=2) | 4315 | 0.2160 | 0.8090 |
-| (비교) 같은 커버리지 59% 를 게이트 순서로 | 11691 | 0.5851 | 0.9351 |
+| Judge-accepted only (strictness=0) | 11691 | 0.5851 | 0.7936 |
+| Judge-accepted only (strictness=1) | 7747 | 0.3877 | 0.8003 |
+| Judge-accepted only (strictness=2) | 4315 | 0.2160 | 0.8090 |
+| (Reference) same coverage 59% taken in gate order | 11691 | 0.5851 | 0.9351 |
 
-judge 를 아무리 깐깐하게 조여도 통과분의 정답률은 0.809 근처에서 멈춘다. 같은 커버리지를 게이트 순서로 고르면 0.935. 이유는 단순하다 — judge 도 라벨링 LLM과 같은 곳에서 헷갈린다. '기타'로 밀어 넣는 성향, 헷갈리는 쌍에서 한쪽을 고르는 성향을 둘 다 공유하면 judge 는 그 오류에 대해 아무 정보도 추가하지 않는다. judge 가 값을 하려면 라벨링 LLM과 다른 것을 보고 판단해야 한다.
+At the same 59% coverage, the judge's accepted rows reach 0.794 while selecting in gate order gives 0.935. No matter how strict the judge is made, accuracy of the accepted rows stalls around 0.809 (at 22% coverage). The reason is simple — the judge gets confused in the same places as the labeling LLM. If it shares both the tendency to push items into the catch-all class and the tendency to pick one side of a confusable pair, the judge adds no information about those errors. For a judge to be worth its cost, it has to base its decision on something different from the labeling LLM.
 
-판정 — ✅ 지지. H1 지지. 등급만으로 품질이 70.2pp 갈리고, 같은 검수 예산에서 게이트 우선이 무작위보다 낫다.
+Verdict — ✅ Supported. H1 supported. Grade alone separates quality by 70.2pp, and under the same review budget, gate-first beats random.
 
-판정 — ❌ 기각. H1b 기각. 교차 합의는 커버리지를 크게 잃으면서 정답률 이득은 같은 모델 반복 호출 게이트보다 작다. 싼 LLM을 합의에 넣으면 메인 LLM이 맞힌 답까지 기각된다.
+Verdict — ❌ Rejected. H1b rejected. Cross-model consensus loses a lot of coverage, and its accuracy gain is smaller than the same-model repeated-call gate. Adding the cheap LLM to the consensus also rejects answers the main LLM got right.
 
-판정 — ❌ 기각. H1c 기각. LLM-as-a-judge 통과분 0.809 < 같은 커버리지 게이트 0.935. judge 를 붙이는 것 자체가 아니라 judge 가 무엇을 보는지가 관건이다. 같은 편향을 공유하는 judge 는 호출 비용만 늘린다.
+Verdict — ❌ Rejected. H1c rejected. At the same 59% coverage, LLM-as-a-judge accepted rows 0.794 < gate 0.935; even the strictest judge reaches only 0.809 (at 22% coverage). What matters is not attaching a judge per se but what the judge looks at. A judge that shares the same bias only adds call cost.

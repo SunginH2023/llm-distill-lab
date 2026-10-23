@@ -1,24 +1,24 @@
 {
   "slug": "e3_soft_labels",
-  "title": "e3 · 투표 분포를 소프트 타깃으로 (KD)",
-  "hypothesis": "라벨링 LLM의 최종 라벨 대신 투표 분포를 학습시키면 작은 모델이 나아지는가",
+  "title": "e3 · Vote distribution as soft targets (KD)",
+  "hypothesis": "Does training on the vote distribution instead of the labeling LLM's final label improve the small model?",
   "targets": [
     [
-      "A 하드 (primary one-hot)",
+      "A hard (primary one-hot)",
       0.7704204204204205,
       0.6555055055055055,
       0.06454426515481901,
       0.8286786786786787
     ],
     [
-      "B 집합 (primary .75 / secondary .25)",
+      "B set (primary .75 / secondary .25)",
       0.7796296296296297,
       0.6597097097097097,
       0.08940252943741823,
       0.8303303303303303
     ],
     [
-      "C 소프트 (투표 분포 그대로)",
+      "C soft (raw vote distribution)",
       0.7899399399399399,
       0.6468468468468469,
       0.17531617967727867,
@@ -27,15 +27,15 @@
   ],
   "strata": [
     [
-      "만장일치층 (agree)",
+      "Unanimous stratum (agree)",
       8771,
       0.9565613955079239,
       0.9592976855546688,
       0.2736290046744916,
-      0.0009009355963600166
+      0.0009009355963600164
     ],
     [
-      "표 갈린 층 (partial+review)",
+      "Split-vote stratum (partial+review)",
       11209,
       0.6411811936836471,
       0.657418146132572,
@@ -43,19 +43,19 @@
       4.3542538008280724e-27
     ],
     [
-      "전체",
+      "All",
       19980,
       0.7796296296296297,
       0.7899399399399399,
       1.0310310310310267,
-      1.5585661965284913e-29
+      1.5585661965284916e-29
     ]
   ],
   "mcnemar_all": {
     "b01": 268,
     "b10": 62,
     "z": 11.284878592545196,
-    "p": 1.5585661965284913e-29
+    "p": 1.5585661965284916e-29
   },
-  "verdict": "△ 부분지지: H3 부분지지. 이득의 방향과 위치는 가설대로지만(갈린 층 +1.62pp) 전체 +1.03pp 는 크지 않다. 채택하되 '이걸로 성능을 만든다'고 말하지 않는다."
+  "verdict": "△ Partially supported: H3 partially supported. The direction and location of the gain match the hypothesis (split stratum +1.62pp), but the overall +1.03pp is not large. Adopt it, but do not claim 'this is what delivers the performance'."
 }
